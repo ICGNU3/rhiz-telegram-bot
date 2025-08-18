@@ -27,15 +27,36 @@ app.get('/health', (req, res) => {
 app.post('/webhook/:botToken', async (req, res) => {
   try {
     const { botToken } = req.params;
+    const update = req.body;
+    
     logger.info(`Received Telegram webhook for bot token: ${botToken}`);
     
-    // Here you would handle the Telegram message
-    // For now, just acknowledge receipt
-    res.status(200).json({ 
-      status: 'ok',
-      message: 'Webhook received',
-      botToken: botToken.substring(0, 10) + '...' // Only show first 10 chars for security
-    });
+    // Handle the Telegram update
+    if (update.message) {
+      const message = update.message;
+      const chatId = message.chat.id;
+      const text = message.text || '';
+      
+      logger.info(`Received message from ${message.from?.username}: ${text}`);
+      
+      // Simple response for now
+      const response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: `🎙️ Thanks for your message: "${text}"\n\nI'm your AI relationship manager! I can help you:\n• Save contacts from voice notes\n• Find contact details\n• Suggest introductions\n• Track relationships\n\nTry sending me a voice message about someone you met!`
+        })
+      });
+      
+      if (!response.ok) {
+        logger.error('Failed to send Telegram response:', await response.text());
+      }
+    }
+    
+    res.status(200).json({ status: 'ok' });
   } catch (error) {
     logger.error('Error handling webhook:', error);
     res.status(500).json({ error: 'Internal server error' });
