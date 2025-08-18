@@ -83,10 +83,14 @@ app.post('/webhook/:botToken', async (req, res) => {
           }
         } else {
           // Generate AI response for general conversation
-          aiResponse = await gpt4Service.generateVoiceResponse(
-            'User is having a general conversation about relationships or networking. Respond naturally and conversationally, as if you are a helpful AI assistant focused on relationship management. Keep responses friendly, concise, and actionable.',
-            text
-          );
+          if (config.openai.apiKey) {
+            aiResponse = await gpt4Service.generateVoiceResponse(
+              'User is having a general conversation about relationships or networking. Respond naturally and conversationally, as if you are a helpful AI assistant focused on relationship management. Keep responses friendly, concise, and actionable.',
+              text
+            );
+          } else {
+            aiResponse = `🤖 Hi! I'm your relationship management assistant.\n\nI can help you:\n• Save contacts from conversations\n• Track relationships\n• Suggest introductions\n• Set and track goals\n\nTry saying: "I met Sarah at the conference, she's a CTO at TechStart"`;
+          }
         }
       
         // Handle voice messages
@@ -180,6 +184,12 @@ app.listen(PORT, () => {
   logger.info(`🚀 Rhiz Bot server running on port ${PORT}`);
   logger.info(`📊 Health check: http://localhost:${PORT}/health`);
   logger.info(`🔗 Webhook: http://localhost:${PORT}/webhook/YOUR_BOT_TOKEN`);
+  logger.info(`🌍 Environment: ${config.env}`);
+  logger.info(`🔑 Bot Token configured: ${config.telegram.botToken ? 'Yes' : 'No'}`);
+  logger.info(`🤖 OpenAI configured: ${config.openai.apiKey ? 'Yes' : 'No'}`);
+}).on('error', (error) => {
+  logger.error('Failed to start server:', error);
+  process.exit(1);
 });
 
 // Handle graceful shutdown

@@ -38,22 +38,22 @@ const config: Config = {
   env: process.env.NODE_ENV || 'development',
   port: parseInt(process.env.PORT || '3000', 10),
   telegram: {
-    botToken: process.env.TELEGRAM_BOT_TOKEN!,
-    webhookUrl: process.env.TELEGRAM_WEBHOOK_URL!,
+    botToken: process.env.TELEGRAM_BOT_TOKEN || '',
+    webhookUrl: process.env.TELEGRAM_WEBHOOK_URL || '',
   },
   openai: {
-    apiKey: process.env.OPENAI_API_KEY!,
+    apiKey: process.env.OPENAI_API_KEY || '',
     model: 'gpt-4-turbo-preview',
     whisperModel: 'whisper-1',
   },
   elevenlabs: {
-    apiKey: process.env.ELEVENLABS_API_KEY!,
+    apiKey: process.env.ELEVENLABS_API_KEY || '',
     voiceId: process.env.ELEVENLABS_VOICE_ID || '21m00Tcm4TlvDq8ikWAM',
   },
   supabase: {
-    url: process.env.SUPABASE_URL!,
-    anonKey: process.env.SUPABASE_ANON_KEY!,
-    serviceKey: process.env.SUPABASE_SERVICE_KEY!,
+    url: process.env.SUPABASE_URL || '',
+    anonKey: process.env.SUPABASE_ANON_KEY || '',
+    serviceKey: process.env.SUPABASE_SERVICE_KEY || '',
   },
   google: {
     clientEmail: process.env.GOOGLE_SHEETS_CLIENT_EMAIL || '',
