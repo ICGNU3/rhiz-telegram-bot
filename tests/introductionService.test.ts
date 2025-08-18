@@ -286,6 +286,9 @@ describe('IntroductionService', () => {
       };
 
       mockDb.introductions.findByContacts.mockResolvedValue(null);
+      mockDb.contacts.findById
+        .mockResolvedValueOnce({ id: fromContactId, name: 'John Doe', company: 'TechCorp' })
+        .mockResolvedValueOnce({ id: toContactId, name: 'Jane Smith', company: 'Startup' });
       mockGpt4Service.generateIntroduction.mockResolvedValue('Hi John, I think you should meet Jane...');
       mockDb.introductions.create.mockResolvedValue(mockIntroduction);
 

@@ -152,3 +152,4 @@ vite.config.ts.timestamp-*
 # Project specific
 temp/
 uploads/
+agents/

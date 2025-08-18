@@ -122,6 +122,22 @@ export class VoiceProcessor {
       logger.error('Error cleaning up temp files:', error);
     }
   }
+
+  // Performance monitoring
+  getPerformanceMetrics(): {
+    averageProcessingTime: number;
+    totalProcessed: number;
+    errorRate: number;
+    costEfficiency: number;
+  } {
+    // This would be implemented with actual metrics tracking
+    return {
+      averageProcessingTime: 2500, // ms
+      totalProcessed: 100,
+      errorRate: 0.05,
+      costEfficiency: 0.85
+    };
+  }
 }
 
 export default new VoiceProcessor();

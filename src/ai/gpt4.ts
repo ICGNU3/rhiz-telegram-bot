@@ -3,11 +3,86 @@ import config from '../utils/config';
 import logger from '../utils/logger';
 import { SYSTEM_PROMPTS, INTENT_PATTERNS } from './prompts';
 
+// Response caching for frequently used queries
+const responseCache = new Map<string, { data: any; timestamp: number }>();
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+// Rate limiting and retry logic
+const API_RETRY_ATTEMPTS = 3;
+const API_RETRY_DELAY = 1000;
+
 const openai = new OpenAI({
   apiKey: config.openai.apiKey,
 });
 
 export class GPT4Service {
+  private embeddingCache = new Map<string, number[]>();
+  private requestQueue: Array<() => Promise<any>> = [];
+  private isProcessingQueue = false;
+
+  // Cached embedding lookup
+  private async getCachedEmbedding(text: string): Promise<number[]> {
+    const cacheKey = text.trim().toLowerCase();
+    if (this.embeddingCache.has(cacheKey)) {
+      return this.embeddingCache.get(cacheKey)!;
+    }
+    
+    const embedding = await this.createEmbedding(text);
+    this.embeddingCache.set(cacheKey, embedding);
+    return embedding;
+  }
+
+  // Queue management for API calls
+  private async queueRequest<T>(requestFn: () => Promise<T>): Promise<T> {
+    return new Promise((resolve, reject) => {
+      this.requestQueue.push(async () => {
+        try {
+          const result = await requestFn();
+          resolve(result);
+        } catch (error) {
+          reject(error);
+        }
+      });
+      this.processQueue();
+    });
+  }
+
+  private async processQueue(): Promise<void> {
+    if (this.isProcessingQueue || this.requestQueue.length === 0) return;
+    
+    this.isProcessingQueue = true;
+    while (this.requestQueue.length > 0) {
+      const request = this.requestQueue.shift()!;
+      try {
+        await request();
+        // Add small delay to respect rate limits
+        await new Promise(resolve => setTimeout(resolve, 100));
+      } catch (error) {
+        logger.error('Queue request failed:', error);
+      }
+    }
+    this.isProcessingQueue = false;
+  }
+
+  // Retry mechanism with exponential backoff
+  private async retryRequest<T>(requestFn: () => Promise<T>, attempts = API_RETRY_ATTEMPTS): Promise<T> {
+    for (let i = 0; i < attempts; i++) {
+      try {
+        return await requestFn();
+      } catch (error: any) {
+        if (i === attempts - 1) throw error;
+        
+        // Only retry on rate limit or temporary errors
+        if (error.status === 429 || error.status >= 500) {
+          const delay = API_RETRY_DELAY * Math.pow(2, i);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          continue;
+        }
+        throw error;
+      }
+    }
+    throw new Error('Max retry attempts reached');
+  }
   async extractContactInfo(transcript: string): Promise<any> {
     try {
       const response = await openai.chat.completions.create({
@@ -158,16 +233,25 @@ Reason: ${reason}
     allContacts: any[],
     threshold: number = 0.7
   ): Promise<any[]> {
-    // Calculate cosine similarity
-    const similarities = await Promise.all(
-      allContacts.map(async (contact) => {
-        const contactText = `${contact.name} ${contact.company} ${contact.title} ${contact.notes}`;
-        const contactEmbedding = await this.createEmbedding(contactText);
-        
-        const similarity = this.cosineSimilarity(embedding, contactEmbedding);
-        return { contact, similarity };
-      })
-    );
+    // Batch process contacts for better performance
+    const batchSize = 10;
+    const similarities: Array<{ contact: any; similarity: number }> = [];
+    
+    for (let i = 0; i < allContacts.length; i += batchSize) {
+      const batch = allContacts.slice(i, i + batchSize);
+      
+      const batchSimilarities = await Promise.all(
+        batch.map(async (contact) => {
+          const contactText = `${contact.name} ${contact.company} ${contact.title} ${contact.notes}`;
+          const contactEmbedding = await this.getCachedEmbedding(contactText);
+          
+          const similarity = this.cosineSimilarity(embedding, contactEmbedding);
+          return { contact, similarity };
+        })
+      );
+      
+      similarities.push(...batchSimilarities);
+    }
 
     return similarities
       .filter(s => s.similarity >= threshold)

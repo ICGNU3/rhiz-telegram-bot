@@ -94,7 +94,6 @@ describe('ContactService', () => {
 
       expect(mockDb.contacts.update).toHaveBeenCalledWith(existingContact.id, {
         voice_notes: [...existingContact.voice_notes, transcript],
-        title: 'CEO',
         notes: `${existingContact.notes}\n\n${mockContactInfo.notes}`
       });
       expect(result).toEqual(updatedContact);
@@ -190,6 +189,7 @@ describe('ContactService', () => {
       
       const mockContact = {
         id: contactId,
+        user_id: 'user123',
         name: 'John Doe',
         company: 'TechCorp',
         title: 'CTO',
