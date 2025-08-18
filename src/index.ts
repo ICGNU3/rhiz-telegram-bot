@@ -84,14 +84,40 @@ app.post('/webhook/:botToken', async (req, res) => {
         } else {
           // Generate AI response for general conversation
           aiResponse = await gpt4Service.generateVoiceResponse(
-            'User is having a general conversation about relationships or networking',
+            'User is having a general conversation about relationships or networking. Respond naturally and conversationally, as if you are a helpful AI assistant focused on relationship management. Keep responses friendly, concise, and actionable.',
             text
           );
         }
       
         // Handle voice messages
         if (message.voice) {
-          aiResponse = `🎙️ I received your voice message! I'm processing it to extract contact information and insights.\n\nThis feature is coming soon - for now, please send a text message describing the person you met.`;
+          try {
+            // Get voice file
+            const voiceFile = await fetch(`https://api.telegram.org/bot${botToken}/getFile?file_id=${message.voice.file_id}`);
+            const voiceData = await voiceFile.json();
+            
+            if (voiceData.ok) {
+              const fileUrl = `https://api.telegram.org/bot${botToken}/${voiceData.result.file_path}`;
+              
+              // Send processing message
+              await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  chat_id: chatId,
+                  text: `🎙️ Processing your voice message...`
+                })
+              });
+              
+              // For now, acknowledge voice message
+              aiResponse = `🎙️ I received your voice message! I'm working on processing it.\n\nFor now, please send a text message describing the person you met, and I'll extract the contact information for you.`;
+            } else {
+              aiResponse = `Sorry, I couldn't process your voice message. Please send a text message instead.`;
+            }
+          } catch (error) {
+            logger.error('Error processing voice message:', error);
+            aiResponse = `Sorry, I encountered an error processing your voice message. Please send a text message instead.`;
+          }
         }
         
         const response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
