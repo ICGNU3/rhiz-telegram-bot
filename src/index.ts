@@ -24,11 +24,18 @@ app.get('/health', (req, res) => {
 });
 
 // Webhook endpoint for Telegram
-app.post(`/webhook/${config.telegram.botToken}`, async (req, res) => {
+app.post('/webhook/:botToken', async (req, res) => {
   try {
-    // Handle Telegram webhook
-    logger.info('Received Telegram webhook');
-    res.status(200).json({ status: 'ok' });
+    const { botToken } = req.params;
+    logger.info(`Received Telegram webhook for bot token: ${botToken}`);
+    
+    // Here you would handle the Telegram message
+    // For now, just acknowledge receipt
+    res.status(200).json({ 
+      status: 'ok',
+      message: 'Webhook received',
+      botToken: botToken.substring(0, 10) + '...' // Only show first 10 chars for security
+    });
   } catch (error) {
     logger.error('Error handling webhook:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -56,7 +63,7 @@ const PORT = config.port || 3000;
 app.listen(PORT, () => {
   logger.info(`🚀 Rhiz Bot server running on port ${PORT}`);
   logger.info(`📊 Health check: http://localhost:${PORT}/health`);
-  logger.info(`🔗 Webhook: http://localhost:${PORT}/webhook/${config.telegram.botToken}`);
+  logger.info(`🔗 Webhook: http://localhost:${PORT}/webhook/YOUR_BOT_TOKEN`);
 });
 
 // Handle graceful shutdown
