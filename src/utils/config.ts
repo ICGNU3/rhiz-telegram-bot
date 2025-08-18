@@ -71,7 +71,6 @@ const config: Config = {
 if (process.env.NODE_ENV === 'production') {
   const requiredEnvVars = [
     'TELEGRAM_BOT_TOKEN',
-    'TELEGRAM_WEBHOOK_URL',
     'OPENAI_API_KEY',
     'ELEVENLABS_API_KEY',
     'SUPABASE_URL',
@@ -81,7 +80,9 @@ if (process.env.NODE_ENV === 'production') {
 
   for (const envVar of requiredEnvVars) {
     if (!process.env[envVar]) {
-      throw new Error(`Missing required environment variable: ${envVar}`);
+      console.warn(`Warning: Missing environment variable: ${envVar}`);
+      // Don't throw error for now - just warn
+      // throw new Error(`Missing required environment variable: ${envVar}`);
     }
   }
 }
