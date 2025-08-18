@@ -30,7 +30,7 @@ export class ElevenLabsService {
       );
 
       logger.info('Speech synthesis completed successfully');
-      return Buffer.from(response.data);
+      return Buffer.from(response.data as ArrayBuffer);
     } catch (error) {
       logger.error('Error synthesizing speech:', error);
       throw error;
@@ -45,7 +45,7 @@ export class ElevenLabsService {
         },
       });
 
-      return response.data.voices;
+      return (response.data as any).voices;
     } catch (error) {
       logger.error('Error fetching voices:', error);
       throw error;
