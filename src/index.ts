@@ -9,6 +9,10 @@ import contactService from './services/contacts';
 import relationshipService from './services/relationships';
 import introductionService from './services/introductions';
 
+// Simple in-memory storage for demo
+const userContexts = new Map();
+const contacts = new Map();
+
 const app = express();
 
 // Middleware
@@ -49,29 +53,58 @@ app.post('/webhook/:botToken', async (req, res) => {
         let aiResponse = '';
         
         if (text.toLowerCase().includes('hello') || text.toLowerCase().includes('hi') || text.toLowerCase().includes('start')) {
-          aiResponse = await gpt4Service.generateVoiceResponse(
-            'User is greeting the bot',
-            text
-          );
+          aiResponse = `🤖 Hi! I'm your AI relationship manager. I can help you:
+
+📝 **Save contacts** - "I met Sarah, she's the CTO at TechStart"
+🔍 **Find people** - "Who did I meet at the conference?"
+🎯 **Set goals** - "I want to expand into Europe by Q4"
+💡 **Get insights** - "How strong is my relationship with John?"
+
+Just tell me about people you meet or ask me anything about your network!`;
         } else if (text.toLowerCase().includes('help') || text.toLowerCase().includes('what can you do')) {
           aiResponse = `🤖 Here's what I can do:\n\n📝 **Contact Management**\n• Extract contact info from voice messages\n• Save and organize your contacts\n• Find contact details when you need them\n\n💡 **Relationship Intelligence**\n• Track relationship strength\n• Suggest follow-up actions\n• Recommend introductions\n\n🎯 **Voice-First Interface**\n• Just speak naturally about people you meet\n• I'll understand and organize everything\n\nTry saying: "I just met Sarah, she's the CTO at TechStart..."`;
-        } else if (text.toLowerCase().includes('contact') || text.toLowerCase().includes('person') || text.toLowerCase().includes('met')) {
-          // Try to extract contact information from the text
-          const contactInfo = await contactService.addFromTranscript(userId?.toString() || 'unknown', text);
-          if (contactInfo) {
-            aiResponse = `✅ Contact saved!\n\n📝 **${contactInfo.name}**\n🏢 ${contactInfo.company || 'Unknown company'}\n💼 ${contactInfo.title || 'Unknown title'}\n\nI've saved this contact to your relationship database. I can help you:\n• Track interactions\n• Suggest follow-ups\n• Find similar contacts\n\nTry asking: "Who did I meet at the conference?"`;
+        } else if (text.toLowerCase().includes('contact') || text.toLowerCase().includes('person') || text.toLowerCase().includes('met') || text.includes('met') || text.includes('introduced')) {
+          // Smart contact extraction
+          const nameMatch = text.match(/(?:met|introduced to|talked with|saw)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)/i);
+          const companyMatch = text.match(/(?:at|from|with)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)/i);
+          const titleMatch = text.match(/(?:is|was|the)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)/i);
+          
+          if (nameMatch) {
+            const name = nameMatch[1];
+            const company = companyMatch ? companyMatch[1] : 'Unknown';
+            const title = titleMatch ? titleMatch[1] : 'Unknown';
+            
+            // Save contact to memory
+            const contactId = `${userId}-${name.toLowerCase()}`;
+            contacts.set(contactId, {
+              name,
+              company,
+              title,
+              userId: userId?.toString() || 'unknown',
+              createdAt: new Date().toISOString()
+            });
+            
+            aiResponse = `✅ Contact saved!\n\n📝 **${name}**\n🏢 ${company}\n💼 ${title}\n\nI've saved this contact. You can now:\n• Ask "Who did I meet at ${company}?"\n• Say "Remind me about ${name}"\n• Ask for follow-up suggestions`;
           } else {
-            aiResponse = `I tried to extract contact information from your message, but I need more details.\n\nPlease include:\n• Their name\n• Company/role\n• How you met\n• Any important details\n\nOr send me a voice message for better processing!`;
+            aiResponse = `I need more details to save this contact. Try:\n\n"I met Sarah Johnson at TechStart, she's the CTO"\n"I was introduced to John Smith from Google"\n"I talked with Maria at the conference"`;
           }
-        } else if (text.toLowerCase().includes('search') || text.toLowerCase().includes('find') || text.toLowerCase().includes('who')) {
-          // Search for contacts
-          const searchResults = await contactService.searchFromTranscript(userId?.toString() || 'unknown', text);
-          if (searchResults && searchResults.length > 0) {
-            aiResponse = `🔍 Here are the contacts I found:\n\n${searchResults.map(contact => 
-              `📝 **${contact.name}**\n🏢 ${contact.company || 'Unknown'}\n💼 ${contact.title || 'Unknown'}\n`
+        } else if (text.toLowerCase().includes('search') || text.toLowerCase().includes('find') || text.toLowerCase().includes('who') || text.toLowerCase().includes('remind')) {
+          // Smart contact search
+          const searchTerm = text.toLowerCase();
+          const userContacts = Array.from(contacts.values()).filter(c => c.userId === userId?.toString());
+          
+          const results = userContacts.filter(contact => 
+            contact.name.toLowerCase().includes(searchTerm) ||
+            contact.company.toLowerCase().includes(searchTerm) ||
+            contact.title.toLowerCase().includes(searchTerm)
+          );
+          
+          if (results.length > 0) {
+            aiResponse = `🔍 Here are the contacts I found:\n\n${results.map(contact => 
+              `📝 **${contact.name}**\n🏢 ${contact.company}\n💼 ${contact.title}\n`
             ).join('\n')}`;
           } else {
-            aiResponse = `I couldn't find any contacts matching your search. Try being more specific or add more contacts first!`;
+            aiResponse = `I couldn't find any contacts matching "${searchTerm}". Try adding some contacts first by saying "I met [name] at [company]"`;
           }
         } else if (text.toLowerCase().includes('goal') || text.toLowerCase().includes('objective')) {
           // Create goal from text
@@ -80,6 +113,22 @@ app.post('/webhook/:botToken', async (req, res) => {
             aiResponse = `🎯 Goal created!\n\n📋 **${goal.description}**\n📅 Target: ${goal.target_date}\n📊 Progress: ${goal.progress}%\n\nI'll help you track progress and suggest contacts who can help achieve this goal.`;
           } else {
             aiResponse = `I couldn't extract a clear goal from your message. Try saying something like: "My goal is to expand into the European market by Q4"`;
+          }
+        } else if (text.toLowerCase().includes('stats') || text.toLowerCase().includes('summary') || text.toLowerCase().includes('how many')) {
+          // Show user stats
+          const userContacts = Array.from(contacts.values()).filter(c => c.userId === userId?.toString());
+          const companies = [...new Set(userContacts.map(c => c.company))];
+          
+          aiResponse = `📊 Your Network Summary:\n\n👥 **${userContacts.length} contacts**\n🏢 **${companies.length} companies**\n\nRecent contacts:\n${userContacts.slice(-3).map(c => `• ${c.name} (${c.company})`).join('\n')}\n\nKeep building your network! 💪`;
+        } else if (text.toLowerCase().includes('follow') || text.toLowerCase().includes('next') || text.toLowerCase().includes('suggest')) {
+          // Smart follow-up suggestions
+          const userContacts = Array.from(contacts.values()).filter(c => c.userId === userId?.toString());
+          
+          if (userContacts.length > 0) {
+            const recentContact = userContacts[userContacts.length - 1];
+            aiResponse = `💡 Here are some follow-up suggestions for ${recentContact.name}:\n\n📧 Send a LinkedIn connection request\n☕ Schedule a coffee chat\n📅 Set a reminder to follow up in 2 weeks\n🎯 Ask about their current projects\n\nWould you like me to help you with any of these?`;
+          } else {
+            aiResponse = `I don't have any recent contacts to suggest follow-ups for. Try adding a contact first by saying "I met [name] at [company]"`;
           }
         } else {
           // Generate AI response for general conversation
