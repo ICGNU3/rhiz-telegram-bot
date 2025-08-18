@@ -10,10 +10,13 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
+    "test:unit": "jest --testPathPattern=tests/.*\\.test\\.ts",
+    "test:integration": "jest --testPathPattern=tests/.*\\.test\\.ts --testNamePattern='Voice Processing Pipeline'",
     "lint": "eslint src/**/*.ts",
     "lint:fix": "eslint src/**/*.ts --fix",
     "format": "prettier --write src/**/*.ts",
-    "db:setup": "echo 'Run database/schema.sql in your Supabase project'"
+    "db:setup": "echo 'Run database/schema.sql in your Supabase project'",
+    "db:test": "node -e \"require('./src/db/supabase').testConnection().then(console.log)\""
   },
   "dependencies": {
     "telegraf": "^4.15.6",
