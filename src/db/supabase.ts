@@ -255,6 +255,10 @@ const goals = {
     return data || [];
   },
 
+  async findActive(userId: string) {
+    return this.findByUserId(userId, 'active');
+  },
+
   async findById(id: string) {
     const { data, error } = await supabase
       .from('goals')
@@ -427,6 +431,46 @@ const introductions = {
   }
 };
 
+// Voice Messages table operations
+const voiceMessages = {
+  async create(messageData: any) {
+    const { data, error } = await supabase
+      .from('voice_messages')
+      .insert(messageData)
+      .select()
+      .single();
+    
+    if (error) {
+      logger.error('Error creating voice message:', error);
+      throw error;
+    }
+    
+    return data;
+  },
+
+  async markProcessed(messageId: string, transcript: string, intent?: string, entities?: any) {
+    const { data, error } = await supabase
+      .from('voice_messages')
+      .update({
+        processed: true,
+        processed_at: new Date().toISOString(),
+        transcript,
+        intent,
+        entities,
+      })
+      .eq('id', messageId)
+      .select()
+      .single();
+    
+    if (error) {
+      logger.error('Error updating voice message:', error);
+      throw error;
+    }
+    
+    return data;
+  }
+};
+
 // Insights table operations
 const insights = {
   async create(insightData: any) {
@@ -503,6 +547,7 @@ export default {
   goals,
   introductions,
   insights,
+  voiceMessages,
   testConnection,
   supabase
 };

@@ -168,7 +168,7 @@ class RelationshipService {
       
       // Save insights
       await Promise.all(
-        insights.map(insight =>
+        insights.map((insight: any) =>
           db.insights.create({
             goal_id: goalId,
             insight_type: insight.type,
@@ -190,7 +190,7 @@ class RelationshipService {
       // Use AI to analyze the relationship and generate insights
       const insights = await gpt4Service.generateContactInsights(contact, interactions, goals);
       
-      return insights.map(insight => ({
+      return insights.map((insight: any) => ({
         id: '',
         contact_id: contact.id,
         insight_type: insight.type,

@@ -25,7 +25,6 @@ global.console = {
 
 // Mock fs for file operations
 jest.mock('fs', () => ({
-  ...jest.requireActual('fs'),
   readFileSync: jest.fn(),
   writeFileSync: jest.fn(),
   existsSync: jest.fn(),
@@ -34,7 +33,6 @@ jest.mock('fs', () => ({
 
 // Mock path for file path operations
 jest.mock('path', () => ({
-  ...jest.requireActual('path'),
   join: jest.fn((...args) => args.join('/')),
   resolve: jest.fn((...args) => args.join('/')),
 }));

@@ -38,7 +38,7 @@ class IntroductionService {
       
       // Create introduction records
       const introductions = await Promise.all(
-        suggestions.map(async (suggestion) => {
+        suggestions.map(async (suggestion: any) => {
           const introMessage = await this.generateMessage(
             suggestion.from_contact.id,
             suggestion.to_contact.id
@@ -58,6 +58,17 @@ class IntroductionService {
       return introductions;
     } catch (error) {
       logger.error('Error suggesting introductions from goals:', error);
+      return [];
+    }
+  }
+
+  async suggestFromTranscript(userId: string, transcript: string): Promise<Introduction[]> {
+    try {
+      // For now, just return suggestions from goals
+      // In production, this would analyze the transcript for introduction requests
+      return await this.suggestFromGoals(userId);
+    } catch (error) {
+      logger.error('Error suggesting introductions from transcript:', error);
       return [];
     }
   }
@@ -162,7 +173,7 @@ class IntroductionService {
       }
 
       // Group contacts by company
-      const companyGroups = contacts.reduce((groups, contact) => {
+      const companyGroups = contacts.reduce((groups: Record<string, any[]>, contact) => {
         if (contact.company) {
           const company = contact.company.toLowerCase();
           if (!groups[company]) {
@@ -180,8 +191,8 @@ class IntroductionService {
         if (companyContacts.length >= 2) {
           for (let i = 0; i < companyContacts.length; i++) {
             for (let j = i + 1; j < companyContacts.length; j++) {
-              const fromContact = companyContacts[i];
-              const toContact = companyContacts[j];
+              const fromContact = companyContacts[i] as any;
+              const toContact = companyContacts[j] as any;
               
               // Check if they already have an introduction
               const existingIntro = await db.introductions.findByContacts(

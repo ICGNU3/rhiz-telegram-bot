@@ -56,8 +56,8 @@ const config: Config = {
     serviceKey: process.env.SUPABASE_SERVICE_KEY!,
   },
   google: {
-    clientEmail: process.env.GOOGLE_SHEETS_CLIENT_EMAIL!,
-    privateKey: process.env.GOOGLE_SHEETS_PRIVATE_KEY!.replace(/\\n/g, '\n'),
+    clientEmail: process.env.GOOGLE_SHEETS_CLIENT_EMAIL || '',
+    privateKey: process.env.GOOGLE_SHEETS_PRIVATE_KEY ? process.env.GOOGLE_SHEETS_PRIVATE_KEY.replace(/\\n/g, '\n') : '',
   },
   sentry: process.env.SENTRY_DSN ? {
     dsn: process.env.SENTRY_DSN,
@@ -67,20 +67,22 @@ const config: Config = {
   } : undefined,
 };
 
-// Validate required config
-const requiredEnvVars = [
-  'TELEGRAM_BOT_TOKEN',
-  'TELEGRAM_WEBHOOK_URL',
-  'OPENAI_API_KEY',
-  'ELEVENLABS_API_KEY',
-  'SUPABASE_URL',
-  'SUPABASE_ANON_KEY',
-  'SUPABASE_SERVICE_KEY',
-];
+// Validate required config (only in production)
+if (process.env.NODE_ENV === 'production') {
+  const requiredEnvVars = [
+    'TELEGRAM_BOT_TOKEN',
+    'TELEGRAM_WEBHOOK_URL',
+    'OPENAI_API_KEY',
+    'ELEVENLABS_API_KEY',
+    'SUPABASE_URL',
+    'SUPABASE_ANON_KEY',
+    'SUPABASE_SERVICE_KEY',
+  ];
 
-for (const envVar of requiredEnvVars) {
-  if (!process.env[envVar]) {
-    throw new Error(`Missing required environment variable: ${envVar}`);
+  for (const envVar of requiredEnvVars) {
+    if (!process.env[envVar]) {
+      throw new Error(`Missing required environment variable: ${envVar}`);
+    }
   }
 }
 

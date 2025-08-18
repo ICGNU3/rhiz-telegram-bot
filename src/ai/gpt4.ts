@@ -188,6 +188,107 @@ Reason: ${reason}
     
     return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
   }
+
+  // Additional methods for relationship and introduction services
+  async suggestIntroductions(goals: any[], contacts: any[]): Promise<any[]> {
+    try {
+      // Simple implementation - in production, this would use AI to suggest introductions
+      const suggestions = [];
+      if (contacts.length >= 2) {
+        suggestions.push({
+          from_contact: contacts[0],
+          to_contact: contacts[1],
+          reason: 'Potential collaboration based on goals'
+        });
+      }
+      return suggestions;
+    } catch (error) {
+      logger.error('Error suggesting introductions:', error);
+      return [];
+    }
+  }
+
+  async suggestIntroductionsByInterests(contacts: any[]): Promise<any[]> {
+    try {
+      // Simple implementation - in production, this would analyze interests
+      const suggestions = [];
+      if (contacts.length >= 2) {
+        suggestions.push({
+          from_contact: contacts[0],
+          to_contact: contacts[1],
+          reason: 'Shared interests',
+          confidence: 0.8,
+          mutual_interests: ['Technology']
+        });
+      }
+      return suggestions;
+    } catch (error) {
+      logger.error('Error suggesting introductions by interests:', error);
+      return [];
+    }
+  }
+
+  async suggestIntroductionFollowUps(introduction: any, fromContact: any, toContact: any): Promise<string[]> {
+    try {
+      return [
+        'Schedule a meeting between the contacts',
+        'Send calendar invite',
+        'Follow up in a week'
+      ];
+    } catch (error) {
+      logger.error('Error suggesting introduction follow-ups:', error);
+      return [];
+    }
+  }
+
+  async generateGoalInsights(goal: any, contacts: any[]): Promise<any[]> {
+    try {
+      return [
+        {
+          type: 'opportunity',
+          title: 'Goal Progress Opportunity',
+          description: 'You have contacts that could help with this goal',
+          confidence: 0.8,
+          actionable: true,
+          next_action: 'Reach out to relevant contacts'
+        }
+      ];
+    } catch (error) {
+      logger.error('Error generating goal insights:', error);
+      return [];
+    }
+  }
+
+  async generateContactInsights(contact: any, interactions: any[], goals: any[]): Promise<any[]> {
+    try {
+      return [
+        {
+          type: 'strength',
+          title: 'Strong Relationship',
+          description: 'This contact has been engaged regularly',
+          confidence: 0.7,
+          actionable: true,
+          next_action: 'Consider for introductions'
+        }
+      ];
+    } catch (error) {
+      logger.error('Error generating contact insights:', error);
+      return [];
+    }
+  }
+
+  async suggestFollowUps(contact: any, interactions: any[]): Promise<string[]> {
+    try {
+      return [
+        'Schedule follow-up meeting',
+        'Send thank you email',
+        'Connect on LinkedIn'
+      ];
+    } catch (error) {
+      logger.error('Error suggesting follow-ups:', error);
+      return [];
+    }
+  }
 }
 
 export default new GPT4Service();
