@@ -4,6 +4,10 @@ import helmet from 'helmet';
 import config from './utils/config';
 import logger from './utils/logger';
 import { RhizTelegramBot } from './bot/telegramBot';
+import gpt4Service from './ai/gpt4';
+import contactService from './services/contacts';
+import relationshipService from './services/relationships';
+import introductionService from './services/introductions';
 
 const app = express();
 
@@ -36,35 +40,88 @@ app.post('/webhook/:botToken', async (req, res) => {
       const message = update.message;
       const chatId = message.chat.id;
       const text = message.text || '';
+      const userId = message.from?.id;
       
       logger.info(`Received message from ${message.from?.username}: ${text}`);
       
-      // AI-powered response
-      let aiResponse = '';
+      try {
+        // AI-powered response using GPT-4
+        let aiResponse = '';
+        
+        if (text.toLowerCase().includes('hello') || text.toLowerCase().includes('hi') || text.toLowerCase().includes('start')) {
+          aiResponse = await gpt4Service.generateVoiceResponse(
+            'User is greeting the bot',
+            text
+          );
+        } else if (text.toLowerCase().includes('help') || text.toLowerCase().includes('what can you do')) {
+          aiResponse = `🤖 Here's what I can do:\n\n📝 **Contact Management**\n• Extract contact info from voice messages\n• Save and organize your contacts\n• Find contact details when you need them\n\n💡 **Relationship Intelligence**\n• Track relationship strength\n• Suggest follow-up actions\n• Recommend introductions\n\n🎯 **Voice-First Interface**\n• Just speak naturally about people you meet\n• I'll understand and organize everything\n\nTry saying: "I just met Sarah, she's the CTO at TechStart..."`;
+        } else if (text.toLowerCase().includes('contact') || text.toLowerCase().includes('person') || text.toLowerCase().includes('met')) {
+          // Try to extract contact information from the text
+          const contactInfo = await contactService.addFromTranscript(userId?.toString() || 'unknown', text);
+          if (contactInfo) {
+            aiResponse = `✅ Contact saved!\n\n📝 **${contactInfo.name}**\n🏢 ${contactInfo.company || 'Unknown company'}\n💼 ${contactInfo.title || 'Unknown title'}\n\nI've saved this contact to your relationship database. I can help you:\n• Track interactions\n• Suggest follow-ups\n• Find similar contacts\n\nTry asking: "Who did I meet at the conference?"`;
+          } else {
+            aiResponse = `I tried to extract contact information from your message, but I need more details.\n\nPlease include:\n• Their name\n• Company/role\n• How you met\n• Any important details\n\nOr send me a voice message for better processing!`;
+          }
+        } else if (text.toLowerCase().includes('search') || text.toLowerCase().includes('find') || text.toLowerCase().includes('who')) {
+          // Search for contacts
+          const searchResults = await contactService.searchFromTranscript(userId?.toString() || 'unknown', text);
+          if (searchResults && searchResults.length > 0) {
+            aiResponse = `🔍 Here are the contacts I found:\n\n${searchResults.map(contact => 
+              `📝 **${contact.name}**\n🏢 ${contact.company || 'Unknown'}\n💼 ${contact.title || 'Unknown'}\n`
+            ).join('\n')}`;
+          } else {
+            aiResponse = `I couldn't find any contacts matching your search. Try being more specific or add more contacts first!`;
+          }
+        } else if (text.toLowerCase().includes('goal') || text.toLowerCase().includes('objective')) {
+          // Create goal from text
+          const goal = await relationshipService.createGoalFromTranscript(userId?.toString() || 'unknown', text);
+          if (goal) {
+            aiResponse = `🎯 Goal created!\n\n📋 **${goal.description}**\n📅 Target: ${goal.target_date}\n📊 Progress: ${goal.progress}%\n\nI'll help you track progress and suggest contacts who can help achieve this goal.`;
+          } else {
+            aiResponse = `I couldn't extract a clear goal from your message. Try saying something like: "My goal is to expand into the European market by Q4"`;
+          }
+        } else {
+          // Generate AI response for general conversation
+          aiResponse = await gpt4Service.generateVoiceResponse(
+            'User is having a general conversation about relationships or networking',
+            text
+          );
+        }
       
-      if (text.toLowerCase().includes('hello') || text.toLowerCase().includes('hi') || text.toLowerCase().includes('start')) {
-        aiResponse = `🎙️ Hello! I'm your AI relationship manager.\n\nI can help you:\n• Save contacts from voice notes\n• Find contact details\n• Suggest introductions\n• Track relationships\n\nTry sending me a voice message about someone you met!`;
-      } else if (text.toLowerCase().includes('contact') || text.toLowerCase().includes('person') || text.toLowerCase().includes('met')) {
-        aiResponse = `Great! I can help you save contact information.\n\nPlease send me a voice message describing the person you met, including:\n• Their name\n• Company/role\n• How you met\n• Any important details\n\nI'll extract and save this information for you!`;
-      } else if (text.toLowerCase().includes('help') || text.toLowerCase().includes('what can you do')) {
-        aiResponse = `🤖 Here's what I can do:\n\n📝 **Contact Management**\n• Extract contact info from voice messages\n• Save and organize your contacts\n• Find contact details when you need them\n\n💡 **Relationship Intelligence**\n• Track relationship strength\n• Suggest follow-up actions\n• Recommend introductions\n\n🎯 **Voice-First Interface**\n• Just speak naturally about people you meet\n• I'll understand and organize everything\n\nTry saying: "I just met Sarah, she's the CTO at TechStart..."`;
-      } else {
-        aiResponse = `I understand you said: "${text}"\n\nI'm designed to help with relationship management. Try:\n• Sending a voice message about someone you met\n• Asking "What can you do?"\n• Saying "Help" for more options`;
-      }
-      
-      const response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          chat_id: chatId,
-          text: aiResponse
-        })
-      });
-      
-      if (!response.ok) {
-        logger.error('Failed to send Telegram response:', await response.text());
+        // Handle voice messages
+        if (message.voice) {
+          aiResponse = `🎙️ I received your voice message! I'm processing it to extract contact information and insights.\n\nThis feature is coming soon - for now, please send a text message describing the person you met.`;
+        }
+        
+        const response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: aiResponse
+          })
+        });
+        
+        if (!response.ok) {
+          logger.error('Failed to send Telegram response:', await response.text());
+        }
+      } catch (error) {
+        logger.error('Error processing message:', error);
+        
+        // Send error message to user
+        await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: `Sorry, I encountered an error processing your message. Please try again or say "Help" for assistance.`
+          })
+        });
       }
     }
     
