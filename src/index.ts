@@ -39,7 +39,19 @@ app.post('/webhook/:botToken', async (req, res) => {
       
       logger.info(`Received message from ${message.from?.username}: ${text}`);
       
-      // Simple response for now
+      // AI-powered response
+      let aiResponse = '';
+      
+      if (text.toLowerCase().includes('hello') || text.toLowerCase().includes('hi') || text.toLowerCase().includes('start')) {
+        aiResponse = `🎙️ Hello! I'm your AI relationship manager.\n\nI can help you:\n• Save contacts from voice notes\n• Find contact details\n• Suggest introductions\n• Track relationships\n\nTry sending me a voice message about someone you met!`;
+      } else if (text.toLowerCase().includes('contact') || text.toLowerCase().includes('person') || text.toLowerCase().includes('met')) {
+        aiResponse = `Great! I can help you save contact information.\n\nPlease send me a voice message describing the person you met, including:\n• Their name\n• Company/role\n• How you met\n• Any important details\n\nI'll extract and save this information for you!`;
+      } else if (text.toLowerCase().includes('help') || text.toLowerCase().includes('what can you do')) {
+        aiResponse = `🤖 Here's what I can do:\n\n📝 **Contact Management**\n• Extract contact info from voice messages\n• Save and organize your contacts\n• Find contact details when you need them\n\n💡 **Relationship Intelligence**\n• Track relationship strength\n• Suggest follow-up actions\n• Recommend introductions\n\n🎯 **Voice-First Interface**\n• Just speak naturally about people you meet\n• I'll understand and organize everything\n\nTry saying: "I just met Sarah, she's the CTO at TechStart..."`;
+      } else {
+        aiResponse = `I understand you said: "${text}"\n\nI'm designed to help with relationship management. Try:\n• Sending a voice message about someone you met\n• Asking "What can you do?"\n• Saying "Help" for more options`;
+      }
+      
       const response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
         method: 'POST',
         headers: {
@@ -47,7 +59,7 @@ app.post('/webhook/:botToken', async (req, res) => {
         },
         body: JSON.stringify({
           chat_id: chatId,
-          text: `🎙️ Thanks for your message: "${text}"\n\nI'm your AI relationship manager! I can help you:\n• Save contacts from voice notes\n• Find contact details\n• Suggest introductions\n• Track relationships\n\nTry sending me a voice message about someone you met!`
+          text: aiResponse
         })
       });
       
