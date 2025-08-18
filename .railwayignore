@@ -1,0 +1,39 @@
+# Development files
+node_modules
+.git
+.gitignore
+.env
+.env.example
+.env.local
+.env.development
+.env.test
+
+# Test files
+tests/
+*.test.ts
+*.test.js
+jest.config.js
+coverage/
+
+# Development tools
+.vscode/
+.idea/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build artifacts (will be rebuilt)
+dist/
+build/
+
+# Documentation
+docs/
+README.md
+DEPLOYMENT-STATUS.md
+railway-deploy.sh
+test-local.js
+
+# OS files
+.DS_Store
+Thumbs.db
