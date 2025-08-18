@@ -94,7 +94,7 @@ app.post('/webhook/:botToken', async (req, res) => {
           try {
             // Get voice file
             const voiceFile = await fetch(`https://api.telegram.org/bot${botToken}/getFile?file_id=${message.voice.file_id}`);
-            const voiceData = await voiceFile.json();
+            const voiceData = await voiceFile.json() as any;
             
             if (voiceData.ok) {
               const fileUrl = `https://api.telegram.org/bot${botToken}/${voiceData.result.file_path}`;
