@@ -1,6 +1,7 @@
 import OpenAI from 'openai';
 import config from '../utils/config';
 import logger from '../utils/logger';
+import rateLimiter from '../utils/rateLimiter';
 import { SYSTEM_PROMPTS, INTENT_PATTERNS } from './prompts';
 
 // Response caching for frequently used queries
@@ -195,8 +196,18 @@ Reason: ${reason}
     return 'GENERAL';
   }
 
-  async generateVoiceResponse(context: string, userMessage: string): Promise<string> {
+  async generateVoiceResponse(context: string, userMessage: string, userId?: string): Promise<string> {
     try {
+      // Check OpenAI rate limits if userId is provided
+      if (userId) {
+        const openAICheck = rateLimiter.canMakeOpenAIRequest(userId);
+        if (!openAICheck.allowed) {
+          logger.warn(`OpenAI rate limit exceeded for user ${userId}`);
+          return `I'm a bit busy right now. Please wait ${openAICheck.retryAfter} seconds and try again.`;
+        }
+        rateLimiter.recordOpenAIRequest(userId);
+      }
+
       const response = await openai.chat.completions.create({
         model: config.openai.model,
         messages: [

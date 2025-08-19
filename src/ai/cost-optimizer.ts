@@ -149,7 +149,7 @@ export class CostOptimizer {
     };
     
     // Task-specific model selection
-    const taskComplexity = {
+    const taskComplexity: { [key: string]: string } = {
       'intent_detection': 'low',
       'contact_extraction': 'medium',
       'relationship_scoring': 'medium',
@@ -158,7 +158,7 @@ export class CostOptimizer {
     };
     
     const recommendedComplexity = taskComplexity[task] || complexity;
-    return modelTiers[recommendedComplexity];
+    return modelTiers[recommendedComplexity as keyof typeof modelTiers];
   }
 
   // Monitor and alert on cost thresholds

@@ -84,7 +84,8 @@ export class VoiceProcessor {
       // Generate response based on intent and context
       const response = await gpt4Service.generateVoiceResponse(
         JSON.stringify(context || {}),
-        transcript
+        transcript,
+        userId
       );
       logger.info(`Response: ${response}`);
       

@@ -121,7 +121,7 @@ export class AIResilienceManager {
     // Template-based responses for common scenarios
     const intent = await this.getFallbackIntentDetection(userMessage);
     
-    const responses = {
+    const responses: { [key: string]: string } = {
       'ADD_CONTACT': "I've noted your contact information. Is there anything specific you'd like me to remember about them?",
       'FIND_CONTACT': "I'll help you find that contact. Let me search through your connections.",
       'SET_GOAL': "I've recorded your goal. I'll help you track progress and suggest relevant connections.",

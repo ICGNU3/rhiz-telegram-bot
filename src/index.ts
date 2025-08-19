@@ -8,6 +8,14 @@ import gpt4Service from './ai/gpt4';
 import contactService from './services/contacts';
 import relationshipService from './services/relationships';
 import introductionService from './services/introductions';
+import commandHandler from './bot/commandHandler';
+import { 
+  webhookRateLimit, 
+  apiRateLimit, 
+  voiceMessageSizeLimit, 
+  cleanupRateLimit,
+  getRateLimitStats 
+} from './middleware/rateLimit';
 
 // Simple in-memory storage for demo
 const userContexts = new Map();
@@ -31,8 +39,11 @@ app.get('/health', (req, res) => {
   });
 });
 
+// Rate limit statistics endpoint
+app.get('/api/rate-limits', getRateLimitStats);
+
 // Webhook endpoint for Telegram
-app.post('/webhook/:botToken', async (req, res) => {
+app.post('/webhook/:botToken', webhookRateLimit, voiceMessageSizeLimit, cleanupRateLimit, async (req, res) => {
   try {
     const { botToken } = req.params;
     const update = req.body;
@@ -49,10 +60,43 @@ app.post('/webhook/:botToken', async (req, res) => {
       logger.info(`Received message from ${message.from?.username}: ${text}`);
       
       try {
+        // Check if it's a command first
+        if (commandHandler.isCommand(text)) {
+          const aiResponse = await commandHandler.handleCommand(text, {
+            chatId,
+            userId,
+            username: message.from?.username
+          });
+          
+          if (aiResponse) {
+            const response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                chat_id: chatId,
+                text: aiResponse,
+                parse_mode: 'Markdown'
+              })
+            });
+            
+            if (!response.ok) {
+              logger.error('Failed to send Telegram response:', await response.text());
+            }
+          }
+          
+          res.status(200).json({ status: 'ok' });
+          return;
+        }
+        
+        // Check if user needs onboarding
+        const onboardingPrompt = userId ? commandHandler.getOnboardingPrompt(userId) : '';
+        
         // AI-powered response using GPT-4
         let aiResponse = '';
         
-        if (text.toLowerCase().includes('hello') || text.toLowerCase().includes('hi') || text.toLowerCase().includes('start')) {
+        if (text.toLowerCase().includes('hello') || text.toLowerCase().includes('hi') || text.toLowerCase() === 'start') {
           aiResponse = `🤖 Hi! I'm your AI relationship manager. I can help you:
 
 📝 **Save contacts** - "I met Sarah, she's the CTO at TechStart"
@@ -60,7 +104,11 @@ app.post('/webhook/:botToken', async (req, res) => {
 🎯 **Set goals** - "I want to expand into Europe by Q4"
 💡 **Get insights** - "How strong is my relationship with John?"
 
-Just tell me about people you meet or ask me anything about your network!`;
+Just tell me about people you meet or ask me anything about your network!
+
+🚀 Type /tutorial for a step-by-step guide
+📚 Type /samples to see example commands
+❓ Type /faq for common questions`;
         } else if (text.toLowerCase().includes('help') || text.toLowerCase().includes('what can you do')) {
           aiResponse = `🤖 Here's what I can do:\n\n📝 **Contact Management**\n• Extract contact info from voice messages\n• Save and organize your contacts\n• Find contact details when you need them\n\n💡 **Relationship Intelligence**\n• Track relationship strength\n• Suggest follow-up actions\n• Recommend introductions\n\n🎯 **Voice-First Interface**\n• Just speak naturally about people you meet\n• I'll understand and organize everything\n\nTry saying: "I just met Sarah, she's the CTO at TechStart..."`;
         } else if (text.toLowerCase().includes('contact') || text.toLowerCase().includes('person') || text.toLowerCase().includes('met') || text.includes('met') || text.includes('introduced')) {
@@ -84,9 +132,9 @@ Just tell me about people you meet or ask me anything about your network!`;
               createdAt: new Date().toISOString()
             });
             
-            aiResponse = `✅ Contact saved!\n\n📝 **${name}**\n🏢 ${company}\n💼 ${title}\n\nI've saved this contact. You can now:\n• Ask "Who did I meet at ${company}?"\n• Say "Remind me about ${name}"\n• Ask for follow-up suggestions`;
+            aiResponse = `✅ Contact saved!\n\n📝 **${name}**\n🏢 ${company}\n💼 ${title}\n\nI've saved this contact. You can now:\n• Ask "Who did I meet at ${company}?"\n• Say "Remind me about ${name}"\n• Ask for follow-up suggestions${onboardingPrompt}`;
           } else {
-            aiResponse = `I need more details to save this contact. Try:\n\n"I met Sarah Johnson at TechStart, she's the CTO"\n"I was introduced to John Smith from Google"\n"I talked with Maria at the conference"`;
+            aiResponse = `I need more details to save this contact. Try:\n\n"I met Sarah Johnson at TechStart, she's the CTO"\n"I was introduced to John Smith from Google"\n"I talked with Maria at the conference"${onboardingPrompt}`;
           }
         } else if (text.toLowerCase().includes('search') || text.toLowerCase().includes('find') || text.toLowerCase().includes('who') || text.toLowerCase().includes('remind')) {
           // Smart contact search
@@ -212,7 +260,7 @@ Just tell me about people you meet or ask me anything about your network!`;
 });
 
 // Manual sync endpoint
-app.post('/api/sync/:userId', async (req, res) => {
+app.post('/api/sync/:userId', apiRateLimit, cleanupRateLimit, async (req, res) => {
   try {
     const { userId } = req.params;
     logger.info(`Manual sync requested for user: ${userId}`);

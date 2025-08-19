@@ -212,7 +212,7 @@ Respond in a way that:
   }
 
   private mapIntentToFocus(intent: string): string {
-    const focusMap = {
+    const focusMap: { [key: string]: string } = {
       'ADD_CONTACT': 'Contact Management',
       'FIND_CONTACT': 'Contact Discovery', 
       'SET_GOAL': 'Goal Planning',
@@ -318,7 +318,13 @@ Respond in JSON format.
     actions: string[];
   } {
     const context = this.getContext(userId);
-    const entities = {
+    const entities: {
+      people: string[];
+      companies: string[];
+      locations: string[];
+      topics: string[];
+      actions: string[];
+    } = {
       people: [],
       companies: [],
       locations: [],

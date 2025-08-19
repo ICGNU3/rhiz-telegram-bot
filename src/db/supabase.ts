@@ -2,15 +2,32 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import config from '../utils/config';
 import logger from '../utils/logger';
 
-const supabase: SupabaseClient = createClient(
-  config.supabase.url,
-  config.supabase.serviceKey
-);
+let supabase: SupabaseClient | null = null;
+
+function getSupabaseClient(): SupabaseClient {
+  if (!supabase) {
+    const url = config.supabase.url || process.env.SUPABASE_URL;
+    const key = config.supabase.serviceKey || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
+    
+    if (!url || !key) {
+      logger.error('Supabase configuration missing:', { 
+        hasUrl: !!url, 
+        hasKey: !!key,
+        envKeys: Object.keys(process.env).filter(k => k.includes('SUPABASE'))
+      });
+      throw new Error('Supabase configuration is missing. Please set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY environment variables.');
+    }
+    
+    supabase = createClient(url, key);
+    logger.info('Supabase client initialized successfully');
+  }
+  return supabase;
+}
 
 // Users table operations
 const users = {
   async findByTelegramId(telegramId: number) {
-    const { data, error } = await supabase
+    const { data, error } = await getSupabaseClient()
       .from('users')
       .select('*')
       .eq('telegram_id', telegramId)
@@ -25,7 +42,7 @@ const users = {
   },
 
   async create(userData: any) {
-    const { data, error } = await supabase
+    const { data, error } = await getSupabaseClient()
       .from('users')
       .insert(userData)
       .select()
@@ -40,7 +57,7 @@ const users = {
   },
 
   async update(id: string, updates: any) {
-    const { data, error } = await supabase
+    const { data, error } = await getSupabaseClient()
       .from('users')
       .update(updates)
       .eq('id', id)
@@ -56,7 +73,7 @@ const users = {
   },
 
   async findById(id: string) {
-    const { data, error } = await supabase
+    const { data, error } = await getSupabaseClient()
       .from('users')
       .select('*')
       .eq('id', id)
@@ -74,7 +91,7 @@ const users = {
 // Contacts table operations
 const contacts = {
   async findByUserId(userId: string) {
-    const { data, error } = await supabase
+    const { data, error } = await getSupabaseClient()
       .from('contacts')
       .select('*')
       .eq('user_id', userId)
@@ -89,7 +106,7 @@ const contacts = {
   },
 
   async create(contactData: any) {
-    const { data, error } = await supabase
+    const { data, error } = await getSupabaseClient()
       .from('contacts')
       .insert(contactData)
       .select()
@@ -104,7 +121,7 @@ const contacts = {
   },
 
   async update(id: string, updates: any) {
-    const { data, error } = await supabase
+    const { data, error } = await getSupabaseClient()
       .from('contacts')
       .update(updates)
       .eq('id', id)
@@ -120,7 +137,7 @@ const contacts = {
   },
 
   async findById(id: string) {
-    const { data, error } = await supabase
+    const { data, error } = await getSupabaseClient()
       .from('contacts')
       .select('*')
       .eq('id', id)
@@ -135,7 +152,7 @@ const contacts = {
   },
 
   async delete(id: string) {
-    const { error } = await supabase
+    const { error } = await getSupabaseClient()
       .from('contacts')
       .delete()
       .eq('id', id);
@@ -147,7 +164,7 @@ const contacts = {
   },
 
   async search(userId: string, searchTerm: string) {
-    const { data, error } = await supabase
+    const { data, error } = await getSupabaseClient()
       .from('contacts')
       .select('*')
       .eq('user_id', userId)
@@ -166,7 +183,7 @@ const contacts = {
 // Interactions table operations
 const interactions = {
   async create(interactionData: any) {
-    const { data, error } = await supabase
+    const { data, error } = await getSupabaseClient()
       .from('interactions')
       .insert(interactionData)
       .select()
@@ -181,7 +198,7 @@ const interactions = {
   },
 
   async findByContact(contactId: string, limit?: number) {
-    let query = supabase
+    let query = getSupabaseClient()
       .from('interactions')
       .select('*')
       .eq('contact_id', contactId)
@@ -202,7 +219,7 @@ const interactions = {
   },
 
   async findByUser(userId: string) {
-    const { data, error } = await supabase
+    const { data, error } = await getSupabaseClient()
       .from('interactions')
       .select('*')
       .eq('user_id', userId)
@@ -220,7 +237,7 @@ const interactions = {
 // Goals table operations
 const goals = {
   async create(goalData: any) {
-    const { data, error } = await supabase
+    const { data, error } = await getSupabaseClient()
       .from('goals')
       .insert(goalData)
       .select()
@@ -235,7 +252,7 @@ const goals = {
   },
 
   async findByUserId(userId: string, status?: string) {
-    let query = supabase
+    let query = getSupabaseClient()
       .from('goals')
       .select('*')
       .eq('user_id', userId)
@@ -260,7 +277,7 @@ const goals = {
   },
 
   async findById(id: string) {
-    const { data, error } = await supabase
+    const { data, error } = await getSupabaseClient()
       .from('goals')
       .select('*')
       .eq('id', id)
@@ -275,7 +292,7 @@ const goals = {
   },
 
   async update(id: string, updates: any) {
-    const { data, error } = await supabase
+    const { data, error } = await getSupabaseClient()
       .from('goals')
       .update(updates)
       .eq('id', id)
@@ -291,7 +308,7 @@ const goals = {
   },
 
   async delete(id: string) {
-    const { error } = await supabase
+    const { error } = await getSupabaseClient()
       .from('goals')
       .delete()
       .eq('id', id);
@@ -306,7 +323,7 @@ const goals = {
 // Introductions table operations
 const introductions = {
   async create(introductionData: any) {
-    const { data, error } = await supabase
+    const { data, error } = await getSupabaseClient()
       .from('introductions')
       .insert(introductionData)
       .select()
@@ -321,7 +338,7 @@ const introductions = {
   },
 
   async findByUserId(userId: string, status?: string) {
-    let query = supabase
+    let query = getSupabaseClient()
       .from('introductions')
       .select('*')
       .eq('user_id', userId)
@@ -342,7 +359,7 @@ const introductions = {
   },
 
   async findById(id: string) {
-    const { data, error } = await supabase
+    const { data, error } = await getSupabaseClient()
       .from('introductions')
       .select('*')
       .eq('id', id)
@@ -357,7 +374,7 @@ const introductions = {
   },
 
   async update(id: string, updates: any) {
-    const { data, error } = await supabase
+    const { data, error } = await getSupabaseClient()
       .from('introductions')
       .update(updates)
       .eq('id', id)
@@ -373,7 +390,7 @@ const introductions = {
   },
 
   async delete(id: string) {
-    const { error } = await supabase
+    const { error } = await getSupabaseClient()
       .from('introductions')
       .delete()
       .eq('id', id);
@@ -385,7 +402,7 @@ const introductions = {
   },
 
   async findByContacts(fromContactId: string, toContactId: string) {
-    const { data, error } = await supabase
+    const { data, error } = await getSupabaseClient()
       .from('introductions')
       .select('*')
       .or(`and(from_contact_id.eq.${fromContactId},to_contact_id.eq.${toContactId}),and(from_contact_id.eq.${toContactId},to_contact_id.eq.${fromContactId})`)
@@ -400,7 +417,7 @@ const introductions = {
   },
 
   async findByContact(contactId: string) {
-    const { data, error } = await supabase
+    const { data, error } = await getSupabaseClient()
       .from('introductions')
       .select('*')
       .or(`from_contact_id.eq.${contactId},to_contact_id.eq.${contactId}`)
@@ -415,7 +432,7 @@ const introductions = {
   },
 
   async findRecentByUserId(userId: string, limit: number) {
-    const { data, error } = await supabase
+    const { data, error } = await getSupabaseClient()
       .from('introductions')
       .select('*')
       .eq('user_id', userId)
@@ -434,7 +451,7 @@ const introductions = {
 // Voice Messages table operations
 const voiceMessages = {
   async create(messageData: any) {
-    const { data, error } = await supabase
+    const { data, error } = await getSupabaseClient()
       .from('voice_messages')
       .insert(messageData)
       .select()
@@ -449,7 +466,7 @@ const voiceMessages = {
   },
 
   async markProcessed(messageId: string, transcript: string, intent?: string, entities?: any) {
-    const { data, error } = await supabase
+    const { data, error } = await getSupabaseClient()
       .from('voice_messages')
       .update({
         processed: true,
@@ -474,7 +491,7 @@ const voiceMessages = {
 // Insights table operations
 const insights = {
   async create(insightData: any) {
-    const { data, error } = await supabase
+    const { data, error } = await getSupabaseClient()
       .from('insights')
       .insert(insightData)
       .select()
@@ -489,7 +506,7 @@ const insights = {
   },
 
   async findByContact(contactId: string) {
-    const { data, error } = await supabase
+    const { data, error } = await getSupabaseClient()
       .from('insights')
       .select('*')
       .eq('contact_id', contactId)
@@ -504,7 +521,7 @@ const insights = {
   },
 
   async findByGoal(goalId: string) {
-    const { data, error } = await supabase
+    const { data, error } = await getSupabaseClient()
       .from('insights')
       .select('*')
       .eq('goal_id', goalId)
@@ -522,7 +539,7 @@ const insights = {
 // Database connection test
 async function testConnection() {
   try {
-    const { data, error } = await supabase
+    const { data, error } = await getSupabaseClient()
       .from('users')
       .select('count')
       .limit(1);
