@@ -40,7 +40,7 @@ export class ContactImporter {
           results.success++;
         } catch (error: any) {
           results.failed++;
-          results.errors.push(`Failed to import ${record.name || 'unknown'}: ${error.message}`);
+          results.errors.push(`Failed to import ${(record as any).name || 'unknown'}: ${error.message}`);
         }
       }
     } catch (error: any) {
@@ -87,7 +87,7 @@ export class ContactImporter {
         throw new Error('Failed to fetch Google contacts');
       }
 
-      const data = await response.json();
+      const data = await response.json() as any;
       const connections = data.connections || [];
 
       for (const person of connections) {

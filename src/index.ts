@@ -8,7 +8,8 @@ import gpt4Service from './ai/gpt4';
 import contactService from './services/contacts';
 import relationshipService from './services/relationships';
 import introductionService from './services/introductions';
-import commandHandler from './bot/commandHandler';\nimport contactImporter from './bot/contactImporter';
+import commandHandler from './bot/commandHandler';
+import contactImporter from './bot/contactImporter';
 import { 
   webhookRateLimit, 
   apiRateLimit, 
@@ -92,6 +93,7 @@ app.post('/webhook/:botToken', webhookRateLimit, voiceMessageSizeLimit, cleanupR
         
         // Handle shared Telegram contacts
         if (message.contact) {
+          let aiResponse = '';
           try {
             const result = await contactImporter.importFromTelegramContact(
               userId?.toString() || 'unknown',

@@ -339,7 +339,7 @@ export class RhizTelegramBot {
       
       if (sessionId) {
         // Process as part of ongoing conversation
-        const result = await conversationManager.processVoiceInput(userId.toString(), text, sessionId);
+        const result = await conversationManager.processVoiceInput(userId.toString(), text || '', sessionId);
         
         await this.bot.sendMessage(chatId, result.response);
         
