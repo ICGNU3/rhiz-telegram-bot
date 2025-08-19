@@ -8,7 +8,7 @@ import gpt4Service from './ai/gpt4';
 import contactService from './services/contacts';
 import relationshipService from './services/relationships';
 import introductionService from './services/introductions';
-import commandHandler from './bot/commandHandler';
+import commandHandler from './bot/commandHandler';\nimport contactImporter from './bot/contactImporter';
 import { 
   webhookRateLimit, 
   apiRateLimit, 
@@ -84,6 +84,60 @@ app.post('/webhook/:botToken', webhookRateLimit, voiceMessageSizeLimit, cleanupR
             if (!response.ok) {
               logger.error('Failed to send Telegram response:', await response.text());
             }
+          }
+          
+          res.status(200).json({ status: 'ok' });
+          return;
+        }
+        
+        // Handle shared Telegram contacts
+        if (message.contact) {
+          try {
+            const result = await contactImporter.importFromTelegramContact(
+              userId?.toString() || 'unknown',
+              message.contact
+            );
+            
+            if (result.success && result.contact) {
+              aiResponse = `✅ **Contact Imported!**
+
+📝 **${result.contact.name}**
+📱 ${result.contact.phone || 'No phone'}
+🏢 ${result.contact.company || 'No company'}
+💼 ${result.contact.title || 'No title'}
+${result.contact.email ? `📧 ${result.contact.email}` : ''}
+
+🎯 **What's next?**
+• Share more contacts from your phone
+• Say "Show my contacts" to see all
+• Type /import for other import options
+
+Keep sharing contacts to build your network! 📲`;
+            } else {
+              aiResponse = `❌ Failed to import contact: ${result.error || 'Unknown error'}
+
+Try sharing the contact again or use /import for other options.`;
+            }
+          } catch (error) {
+            logger.error('Contact import error:', error);
+            aiResponse = `❌ Error importing contact. Please try again or use /import for other options.`;
+          }
+          
+          // Send response and return early
+          const response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: aiResponse,
+              parse_mode: 'Markdown'
+            })
+          });
+          
+          if (!response.ok) {
+            logger.error('Failed to send Telegram response:', await response.text());
           }
           
           res.status(200).json({ status: 'ok' });

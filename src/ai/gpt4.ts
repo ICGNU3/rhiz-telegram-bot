@@ -384,6 +384,179 @@ Reason: ${reason}
       return [];
     }
   }
+
+  // New conversational AI methods
+  async analyzeConversation(
+    transcript: string,
+    context: any
+  ): Promise<{ mood: 'casual' | 'professional' | 'urgent'; topic: string }> {
+    try {
+      const response = await openai.chat.completions.create({
+        model: config.openai.model,
+        messages: [
+          {
+            role: 'system',
+            content: `Analyze the conversation mood and topic. 
+            Mood options: casual (friendly, relaxed), professional (formal, business-like), urgent (time-sensitive, important)
+            Topic: What is the main subject being discussed? (contact, goal, introduction, general, etc.)
+            
+            Respond in JSON format:
+            {
+              "mood": "casual|professional|urgent",
+              "topic": "topic_name",
+              "confidence": 0.95
+            }`
+          },
+          {
+            role: 'user',
+            content: `Transcript: "${transcript}"
+            Recent context: ${context.conversationHistory?.slice(-3).map((msg: { role: string; content: string }) => `${msg.role}: ${msg.content}`).join(' | ') || 'None'}`
+          }
+        ],
+        temperature: 0.3,
+        max_tokens: 100,
+      });
+
+      const result = JSON.parse(response.choices[0]?.message?.content || '{"mood": "casual", "topic": "general"}');
+      return {
+        mood: result.mood || 'casual',
+        topic: result.topic || 'general'
+      };
+    } catch (error) {
+      logger.error('Error analyzing conversation:', error);
+      return { mood: 'casual', topic: 'general' };
+    }
+  }
+
+  async generateConversationalResponse(
+    transcript: string,
+    context: {
+      mood: string;
+      topic: string;
+      recentHistory: string;
+      activeContacts: string[];
+      currentGoal?: string;
+    }
+  ): Promise<{ text: string; actions: string[] }> {
+    try {
+      const response = await openai.chat.completions.create({
+        model: config.openai.model,
+        messages: [
+          {
+            role: 'system',
+            content: `You are Rhiz, a warm and professional AI relationship manager having a natural conversation.
+            
+            Your personality:
+            - Friendly and approachable, but professional
+            - Concise responses (2-3 sentences max)
+            - Proactive with suggestions
+            - Natural conversational style
+            - Focus on relationship building and networking
+            
+            Current mood: ${context.mood}
+            Current topic: ${context.topic}
+            Active contacts: ${context.activeContacts.join(', ') || 'None'}
+            Current goal: ${context.currentGoal || 'None'}
+            
+            Recent conversation:
+            ${context.recentHistory}
+            
+            Respond naturally as if in a phone conversation. Be conversational, not robotic.
+            Also suggest 1-3 relevant actions the user might want to take.`
+          },
+          {
+            role: 'user',
+            content: transcript
+          }
+        ],
+        temperature: 0.7,
+        max_tokens: 200,
+      });
+
+      const content = response.choices[0]?.message?.content || 'I understand. How else can I help you?';
+      
+      // Extract actions from response (they might be mentioned in the text)
+      const actions = this.extractActionsFromResponse(content, context.topic);
+
+      return {
+        text: content,
+        actions
+      };
+    } catch (error) {
+      logger.error('Error generating conversational response:', error);
+      return {
+        text: 'I understand. How else can I help you?',
+        actions: []
+      };
+    }
+  }
+
+  private extractActionsFromResponse(response: string, topic: string): string[] {
+    const actions = [];
+    
+    // Extract actions based on topic and response content
+    if (topic === 'contact' || response.toLowerCase().includes('contact')) {
+      if (response.toLowerCase().includes('save') || response.toLowerCase().includes('add')) {
+        actions.push('📝 Save contact details');
+      }
+      if (response.toLowerCase().includes('remind') || response.toLowerCase().includes('follow')) {
+        actions.push('⏰ Set follow-up reminder');
+      }
+      if (response.toLowerCase().includes('introduce') || response.toLowerCase().includes('connect')) {
+        actions.push('💡 Get introduction suggestions');
+      }
+    }
+    
+    if (topic === 'goal' || response.toLowerCase().includes('goal')) {
+      actions.push('🎯 Track goal progress');
+      actions.push('👥 Find relevant contacts');
+    }
+
+    // Default actions if none found
+    if (actions.length === 0) {
+      actions.push('📝 Add new contact');
+      actions.push('🔍 Search contacts');
+    }
+
+    return actions;
+  }
+
+  async generateConversationSummary(
+    conversationHistory: Array<{ role: string; content: string; timestamp: Date }>
+  ): Promise<string> {
+    try {
+      const conversationText = conversationHistory
+        .map((msg: { role: string; content: string; timestamp: Date }) => `${msg.role}: ${msg.content}`)
+        .join('\n');
+
+      const response = await openai.chat.completions.create({
+        model: config.openai.model,
+        messages: [
+          {
+            role: 'system',
+            content: `Summarize this conversation in 2-3 sentences, focusing on:
+            - Main topics discussed
+            - Key contacts mentioned
+            - Actions taken or planned
+            - Overall outcome
+            
+            Be concise but informative.`
+          },
+          {
+            role: 'user',
+            content: conversationText
+          }
+        ],
+        temperature: 0.5,
+        max_tokens: 150,
+      });
+
+      return response.choices[0]?.message?.content || 'Conversation summary unavailable.';
+    } catch (error) {
+      logger.error('Error generating conversation summary:', error);
+      return 'Conversation summary unavailable.';
+    }
+  }
 }
 
 export default new GPT4Service();

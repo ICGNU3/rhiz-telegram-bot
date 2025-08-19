@@ -465,7 +465,7 @@ const voiceMessages = {
     return data;
   },
 
-  async markProcessed(messageId: string, transcript: string, intent?: string, entities?: any) {
+  async markProcessed(messageId: string, transcript: string, intent: string, entities?: any) {
     const { data, error } = await getSupabaseClient()
       .from('voice_messages')
       .update({
@@ -485,6 +485,90 @@ const voiceMessages = {
     }
     
     return data;
+  }
+};
+
+// Conversations table operations
+const conversations = {
+  async create(conversationData: any) {
+    const { data, error } = await getSupabaseClient()
+      .from('conversations')
+      .insert(conversationData)
+      .select()
+      .single();
+    
+    if (error) {
+      logger.error('Error creating conversation:', error);
+      throw error;
+    }
+    
+    return data;
+  },
+
+  async findBySessionId(sessionId: string) {
+    const { data, error } = await getSupabaseClient()
+      .from('conversations')
+      .select('*')
+      .eq('session_id', sessionId)
+      .single();
+    
+    if (error && error.code !== 'PGRST116') {
+      logger.error('Error finding conversation by session ID:', error);
+      throw error;
+    }
+    
+    return data;
+  },
+
+  async update(id: string, updates: any) {
+    const { data, error } = await getSupabaseClient()
+      .from('conversations')
+      .update(updates)
+      .eq('id', id)
+      .select()
+      .single();
+    
+    if (error) {
+      logger.error('Error updating conversation:', error);
+      throw error;
+    }
+    
+    return data;
+  },
+
+  async endConversation(sessionId: string, summary?: string, duration?: number) {
+    const { data, error } = await getSupabaseClient()
+      .from('conversations')
+      .update({
+        ended_at: new Date().toISOString(),
+        summary,
+        duration_ms: duration,
+      })
+      .eq('session_id', sessionId)
+      .select()
+      .single();
+    
+    if (error) {
+      logger.error('Error ending conversation:', error);
+      throw error;
+    }
+    
+    return data;
+  },
+
+  async findByUserId(userId: string) {
+    const { data, error } = await getSupabaseClient()
+      .from('conversations')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
+    
+    if (error) {
+      logger.error('Error finding conversations by user ID:', error);
+      throw error;
+    }
+    
+    return data || [];
   }
 };
 
@@ -565,6 +649,7 @@ export default {
   introductions,
   insights,
   voiceMessages,
+  conversations,
   testConnection,
   supabase
 };

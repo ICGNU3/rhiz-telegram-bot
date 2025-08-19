@@ -57,6 +57,15 @@ export class CommandHandler {
       
       case '/goals':
         return this.listGoals(context);
+      
+      case '/import':
+        return this.showImportOptions();
+      
+      case '/connect_google':
+        return this.initiateGoogleConnect(context);
+      
+      case '/sync_telegram':
+        return this.showTelegramSync();
         
       default:
         if (command.startsWith('/')) {
@@ -193,6 +202,107 @@ Set your first goal to get started!`;
       return '\n\n💡 New here? Try /tutorial for a guided walkthrough!';
     }
     return '';
+  }
+
+  private showImportOptions(): string {
+    return `📥 **Import Your Contacts**
+
+Choose an import method:
+
+**1️⃣ Telegram Contacts** 📱
+Type /sync_telegram to import from your phone
+
+**2️⃣ CSV File Upload**
+Send me a CSV file with your contacts
+
+**3️⃣ Google Contacts** 
+Type /connect_google to sync
+
+**4️⃣ Bulk Text Import**
+Send contacts as:
+• Name - Company - Title
+• Name at Company
+• Or just names on separate lines
+
+**5️⃣ Voice Message**
+Record a voice note listing your contacts
+
+**Example bulk text:**
+\`\`\`
+Sarah Chen - Microsoft - PM
+John Smith at Google
+David Lee, CTO, StartupX
+Maria Garcia
+\`\`\`
+
+Just paste your contacts and I'll import them!`;
+  }
+
+  private initiateGoogleConnect(context: CommandContext): string {
+    const { userId } = context;
+    
+    // In production, you'd generate an OAuth URL here
+    const googleAuthUrl = `https://accounts.google.com/o/oauth2/v2/auth?` +
+      `client_id=${process.env.GOOGLE_CLIENT_ID || 'YOUR_CLIENT_ID'}&` +
+      `redirect_uri=${process.env.GOOGLE_REDIRECT_URI || 'https://your-app.railway.app/auth/google/callback'}&` +
+      `response_type=code&` +
+      `scope=https://www.googleapis.com/auth/contacts.readonly&` +
+      `state=${userId}`;
+    
+    return `🔗 **Connect Google Contacts**
+
+To import your Google contacts:
+
+1. Click this link to authorize:
+${googleAuthUrl}
+
+2. Allow access to your contacts
+3. You'll be redirected back to Telegram
+4. Your contacts will be imported automatically
+
+**Privacy Note:**
+• We only read contact names, emails, and companies
+• Your data is encrypted and private
+• You can revoke access anytime in Google settings
+
+Having issues? Try sending your contacts as text instead!`;
+  }
+
+  private showTelegramSync(): string {
+    return `📱 **Import from Telegram Contacts**
+
+To import contacts from your phone:
+
+**Step 1: Share Contacts**
+1. Click the 📎 attachment button in Telegram
+2. Select "Contact" 
+3. Choose contacts from your phone
+4. Send them to this chat
+
+**Step 2: Bulk Share (Recommended)**
+• You can select multiple contacts at once
+• Send them one by one or in groups
+• I'll automatically import each contact
+
+**What I'll Import:**
+✅ Name and phone number
+✅ Email (if in contact)
+✅ Company/Organization
+✅ Job title
+✅ Notes and additional info
+
+**Privacy:**
+🔒 Your contacts stay private to your account
+🔒 Only you can see your imported contacts
+🔒 Data is encrypted and secure
+
+**Alternative:**
+If sharing contacts doesn't work, try:
+• Copying contact info as text
+• Exporting from your phone as CSV
+• Using voice messages to describe contacts
+
+Ready? Start sharing your contacts with the bot! 📲`;
   }
 }
 

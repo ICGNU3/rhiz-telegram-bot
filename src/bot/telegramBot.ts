@@ -3,12 +3,14 @@ import config from '../utils/config';
 import logger from '../utils/logger';
 import db from '../db/supabase';
 import voiceProcessor from '../voice/processor';
+import conversationManager from '../voice/conversationManager';
 import contactService from '../services/contacts';
 import relationshipService from '../services/relationships';
 import introductionService from '../services/introductions';
 
 export class RhizTelegramBot {
   private bot: TelegramBot;
+  private userSessions: Map<string, string> = new Map(); // userId -> sessionId
 
   constructor() {
     this.bot = new TelegramBot(config.telegram.botToken);
@@ -27,6 +29,9 @@ export class RhizTelegramBot {
     
     // Goals command
     this.bot.onText(/\/goals/, this.handleGoals.bind(this));
+    
+    // End conversation command
+    this.bot.onText(/\/end/, this.handleEndConversation.bind(this));
     
     // Voice messages
     this.bot.on('voice', this.handleVoiceMessage.bind(this));
@@ -68,7 +73,7 @@ export class RhizTelegramBot {
           `• 💡 Suggest valuable introductions\n` +
           `• ⏰ Set follow-up reminders\n` +
           `• 📊 Track relationship strength\n\n` +
-          `Just send me a voice message to get started! For example:\n` +
+          `Just send me a voice message to start a conversation! For example:\n` +
           `"I just met Sarah Chen, she's the CTO at TechStart..."\n\n` +
           `Type /help for more commands.`
         );
@@ -102,23 +107,49 @@ export class RhizTelegramBot {
     
     await this.bot.sendMessage(
       chatId,
-      `📚 *Rhiz Commands:*\n\n` +
-      `/start - Initialize or restart Rhiz\n` +
-      `/help - Show this help message\n` +
-      `/contacts - List your contacts\n` +
-      `/goals - Manage your professional goals\n` +
-      `/introductions - View suggested introductions\n` +
-      `/reminders - Check upcoming reminders\n` +
-      `/export - Export contacts to Google Sheets\n\n` +
-      `💡 *Voice Commands:*\n` +
-      `• "I met [Name] at [Company]..."\n` +
-      `• "Tell me about [Name]"\n` +
-      `• "Who should I talk to about [Topic]?"\n` +
-      `• "Remind me to follow up with [Name]"\n` +
-      `• "My goal is to [Goal Description]"\n\n` +
-      `Just send a voice message anytime!`,
+      `🤖 **Rhiz AI Commands**\n\n` +
+      `**Voice Commands (Recommended):**\n` +
+      `🎙️ Just send a voice message and talk naturally!\n\n` +
+      `**Text Commands:**\n` +
+      `📝 /contacts - View your contacts\n` +
+      `🎯 /goals - Manage your goals\n` +
+      `❓ /help - Show this help\n` +
+      `🔚 /end - End current conversation\n\n` +
+      `**Voice Examples:**\n` +
+      `• "I met John Smith at the conference"\n` +
+      `• "Who do I know at Google?"\n` +
+      `• "My goal is to hire 5 engineers"\n` +
+      `• "Remind me to follow up with Sarah"`,
       { parse_mode: 'Markdown' }
     );
+  }
+
+  private async handleEndConversation(msg: TelegramBot.Message): Promise<void> {
+    const chatId = msg.chat.id;
+    const userId = msg.from?.id;
+    
+    if (!userId) return;
+
+    try {
+      const sessionId = this.userSessions.get(userId.toString());
+      if (sessionId) {
+        await conversationManager.endConversation(sessionId);
+        this.userSessions.delete(userId.toString());
+        
+        await this.bot.sendMessage(
+          chatId,
+          `👋 Conversation ended. Thanks for chatting! Feel free to start a new conversation anytime with a voice message.`
+        );
+      } else {
+        await this.bot.sendMessage(
+          chatId,
+          `No active conversation to end. Send me a voice message to start chatting!`
+        );
+      }
+    } catch (error) {
+      logger.error('Error ending conversation:', error);
+      await this.bot.sendMessage(chatId, 'Sorry, I encountered an error ending the conversation.');
+    }
   }
 
   private async handleContacts(msg: TelegramBot.Message): Promise<void> {
@@ -225,6 +256,13 @@ export class RhizTelegramBot {
         return;
       }
 
+      // Get or create session
+      let sessionId = this.userSessions.get(userId.toString());
+      if (!sessionId) {
+        sessionId = await conversationManager.startConversation(user.id);
+        this.userSessions.set(userId.toString(), sessionId);
+      }
+
       // Save voice message record
       const voiceMessage = await db.voiceMessages.create({
         user_id: user.id,
@@ -238,11 +276,12 @@ export class RhizTelegramBot {
       const response = await fetch(fileLink);
       const audioBuffer = Buffer.from(await response.arrayBuffer());
 
-      // Process voice message
+      // Process voice message with conversation context
       const result = await voiceProcessor.processVoiceMessage(
         audioBuffer,
         user.id,
-        { user, recentContacts: await db.contacts.findByUserId(user.id) }
+        { user, recentContacts: await db.contacts.findByUserId(user.id) },
+        sessionId
       );
 
       // Update voice message record
@@ -252,19 +291,28 @@ export class RhizTelegramBot {
         result.intent
       );
 
-      // Handle based on intent
-      await this.handleIntent(
-        chatId,
-        user.id,
-        result.intent,
-        result.transcript,
-        result.response
-      );
-
       // Send voice response
       await this.bot.sendVoice(chatId, result.audioResponse, {
         caption: result.response,
       });
+
+      // If conversation should continue, show suggested actions
+      if (result.shouldContinue && result.suggestedActions.length > 0) {
+        const actionButtons = result.suggestedActions.map(action => [{ text: action }]);
+        
+        await this.bot.sendMessage(
+          chatId,
+          `💡 **Quick Actions:**\n\n${result.suggestedActions.join('\n')}\n\nOr just continue talking naturally!`,
+          {
+            parse_mode: 'Markdown',
+            reply_markup: {
+              keyboard: actionButtons,
+              one_time_keyboard: true,
+              resize_keyboard: true,
+            },
+          }
+        );
+      }
 
     } catch (error) {
       logger.error('Error processing voice message:', error);
@@ -278,19 +326,55 @@ export class RhizTelegramBot {
   private async handleTextMessage(msg: TelegramBot.Message): Promise<void> {
     const chatId = msg.chat.id;
     const text = msg.text;
+    const userId = msg.from?.id;
     
     // Skip if it's a command
     if (text?.startsWith('/')) return;
     
-    await this.bot.sendMessage(
-      chatId,
-      'I work best with voice messages! 🎙️\n' +
-      'Just tap the microphone and tell me about:\n' +
-      '• Someone you met\n' +
-      '• A goal you\'re working on\n' +
-      '• Someone you\'re looking for\n\n' +
-      'Or use /help to see available commands.'
-    );
+    if (!userId) return;
+
+    try {
+      // Check if user has an active session
+      const sessionId = this.userSessions.get(userId.toString());
+      
+      if (sessionId) {
+        // Process as part of ongoing conversation
+        const result = await conversationManager.processVoiceInput(userId.toString(), text, sessionId);
+        
+        await this.bot.sendMessage(chatId, result.response);
+        
+        if (result.shouldContinue && result.suggestedActions.length > 0) {
+          const actionButtons = result.suggestedActions.map(action => [{ text: action }]);
+          
+          await this.bot.sendMessage(
+            chatId,
+            `💡 **Quick Actions:**\n\n${result.suggestedActions.join('\n')}`,
+            {
+              parse_mode: 'Markdown',
+              reply_markup: {
+                keyboard: actionButtons,
+                one_time_keyboard: true,
+                resize_keyboard: true,
+              },
+            }
+          );
+        }
+      } else {
+        // No active session, encourage voice usage
+        await this.bot.sendMessage(
+          chatId,
+          'I work best with voice messages! 🎙️\n' +
+          'Just tap the microphone and tell me about:\n' +
+          '• Someone you met\n' +
+          '• A goal you\'re working on\n' +
+          '• Someone you\'re looking for\n\n' +
+          'Or use /help to see available commands.'
+        );
+      }
+    } catch (error) {
+      logger.error('Error handling text message:', error);
+      await this.bot.sendMessage(chatId, 'Sorry, I encountered an error. Please try again.');
+    }
   }
 
   private async handleContactShared(msg: TelegramBot.Message): Promise<void> {

@@ -6,6 +6,7 @@ import logger from '../utils/logger';
 import whisperService from './whisper';
 import elevenLabsService from './elevenlabs';
 import gpt4Service from '../ai/gpt4';
+import conversationManager from './conversationManager';
 
 // Set ffmpeg path
 if (ffmpegStatic) {
@@ -60,6 +61,55 @@ export class VoiceProcessor {
   }
 
   async processVoiceMessage(
+    audioBuffer: Buffer,
+    userId: string,
+    context?: any,
+    sessionId?: string
+  ): Promise<{
+    transcript: string;
+    intent: string;
+    response: string;
+    audioResponse: Buffer;
+    sessionId: string;
+    shouldContinue: boolean;
+    suggestedActions: string[];
+  }> {
+    try {
+      // Convert OGG to WAV for Whisper
+      const wavPath = await this.convertOggToWav(audioBuffer);
+      
+      // Transcribe audio
+      const transcript = await whisperService.transcribe(wavPath);
+      logger.info(`Transcript: ${transcript}`);
+      
+      // Use conversation manager for phone-like experience
+      const conversationResult = await conversationManager.processVoiceInput(
+        userId,
+        transcript,
+        sessionId
+      );
+      
+      // Detect intent for backward compatibility
+      const intent = await gpt4Service.detectIntent(transcript);
+      logger.info(`Detected intent: ${intent}`);
+      
+      return {
+        transcript,
+        intent,
+        response: conversationResult.response,
+        audioResponse: conversationResult.audioResponse,
+        sessionId: conversationResult.sessionId,
+        shouldContinue: conversationResult.shouldContinue,
+        suggestedActions: conversationResult.suggestedActions,
+      };
+    } catch (error) {
+      logger.error('Error processing voice message:', error);
+      throw error;
+    }
+  }
+
+  // Legacy method for backward compatibility
+  async processVoiceMessageLegacy(
     audioBuffer: Buffer,
     userId: string,
     context?: any
