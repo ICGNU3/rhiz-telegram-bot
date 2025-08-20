@@ -10,6 +10,7 @@ import relationshipService from './services/relationships';
 import introductionService from './services/introductions';
 import commandHandler from './bot/commandHandler';
 import contactImporter from './bot/contactImporter';
+import userService from './services/userService';
 import { 
   webhookRateLimit, 
   apiRateLimit, 
@@ -18,9 +19,8 @@ import {
   getRateLimitStats 
 } from './middleware/rateLimit';
 
-// Simple in-memory storage for demo
+// User contexts for session management
 const userContexts = new Map();
-const contacts = new Map();
 
 const app = express();
 
@@ -61,6 +61,14 @@ app.post('/webhook/:botToken', webhookRateLimit, voiceMessageSizeLimit, cleanupR
       logger.info(`Received message from ${message.from?.username}: ${text}`);
       
       try {
+        // Get or create user in database
+        const user = await userService.getOrCreateUser({
+          telegram_id: userId!,
+          username: message.from?.username,
+          first_name: message.from?.first_name,
+          last_name: message.from?.last_name
+        });
+        
         // Check if it's a command first
         if (commandHandler.isCommand(text)) {
           const aiResponse = await commandHandler.handleCommand(text, {
@@ -96,7 +104,7 @@ app.post('/webhook/:botToken', webhookRateLimit, voiceMessageSizeLimit, cleanupR
           let aiResponse = '';
           try {
             const result = await contactImporter.importFromTelegramContact(
-              userId?.toString() || 'unknown',
+              user.id,
               message.contact
             );
             
@@ -175,61 +183,52 @@ Just tell me about people you meet or ask me anything about your network!
           
           if (nameMatch) {
             const name = nameMatch[1];
-            const company = companyMatch ? companyMatch[1] : 'Unknown';
-            const title = titleMatch ? titleMatch[1] : 'Unknown';
+            const company = companyMatch ? companyMatch[1] : '';
+            const title = titleMatch ? titleMatch[1] : '';
             
-            // Save contact to memory
-            const contactId = `${userId}-${name.toLowerCase()}`;
-            contacts.set(contactId, {
+            // Save contact to database
+            const contact = await userService.saveContact(user.id, {
               name,
-              company,
-              title,
-              userId: userId?.toString() || 'unknown',
-              createdAt: new Date().toISOString()
+              company: company || undefined,
+              title: title || undefined,
+              source: 'text_input',
+              met_at: 'Telegram conversation'
             });
             
-            aiResponse = `✅ Contact saved!\n\n📝 **${name}**\n🏢 ${company}\n💼 ${title}\n\nI've saved this contact. You can now:\n• Ask "Who did I meet at ${company}?"\n• Say "Remind me about ${name}"\n• Ask for follow-up suggestions${onboardingPrompt}`;
+            aiResponse = `✅ Contact saved!\n\n📝 **${name}**\n🏢 ${company || 'No company'}\n💼 ${title || 'No title'}\n\nI've saved this contact. You can now:\n• Ask "Who did I meet at ${company}?"\n• Say "Remind me about ${name}"\n• Ask for follow-up suggestions${onboardingPrompt}`;
           } else {
             aiResponse = `I need more details to save this contact. Try:\n\n"I met Sarah Johnson at TechStart, she's the CTO"\n"I was introduced to John Smith from Google"\n"I talked with Maria at the conference"${onboardingPrompt}`;
           }
         } else if (text.toLowerCase().includes('search') || text.toLowerCase().includes('find') || text.toLowerCase().includes('who') || text.toLowerCase().includes('remind')) {
-          // Smart contact search
+          // Smart contact search using database
           const searchTerm = text.toLowerCase();
-          const userContacts = Array.from(contacts.values()).filter(c => c.userId === userId?.toString());
-          
-          const results = userContacts.filter(contact => 
-            contact.name.toLowerCase().includes(searchTerm) ||
-            contact.company.toLowerCase().includes(searchTerm) ||
-            contact.title.toLowerCase().includes(searchTerm)
-          );
+          const results = await userService.searchContacts(user.id, searchTerm);
           
           if (results.length > 0) {
-            aiResponse = `🔍 Here are the contacts I found:\n\n${results.map(contact => 
-              `📝 **${contact.name}**\n🏢 ${contact.company}\n💼 ${contact.title}\n`
+            aiResponse = `🔍 Here are the contacts I found:\n\n${results.map((contact: any) => 
+              `📝 **${contact.name}**\n🏢 ${contact.company || 'No company'}\n💼 ${contact.title || 'No title'}\n${contact.email ? `📧 ${contact.email}` : ''}\n`
             ).join('\n')}`;
           } else {
             aiResponse = `I couldn't find any contacts matching "${searchTerm}". Try adding some contacts first by saying "I met [name] at [company]"`;
           }
         } else if (text.toLowerCase().includes('goal') || text.toLowerCase().includes('objective')) {
           // Create goal from text
-          const goal = await relationshipService.createGoalFromTranscript(userId?.toString() || 'unknown', text);
+          const goal = await relationshipService.createGoalFromTranscript(user.id, text);
           if (goal) {
             aiResponse = `🎯 Goal created!\n\n📋 **${goal.description}**\n📅 Target: ${goal.target_date}\n📊 Progress: ${goal.progress}%\n\nI'll help you track progress and suggest contacts who can help achieve this goal.`;
           } else {
             aiResponse = `I couldn't extract a clear goal from your message. Try saying something like: "My goal is to expand into the European market by Q4"`;
           }
         } else if (text.toLowerCase().includes('stats') || text.toLowerCase().includes('summary') || text.toLowerCase().includes('how many')) {
-          // Show user stats
-          const userContacts = Array.from(contacts.values()).filter(c => c.userId === userId?.toString());
-          const companies = [...new Set(userContacts.map(c => c.company))];
+          // Show user stats from database
+          const stats = await userService.getNetworkStats(user.id);
           
-          aiResponse = `📊 Your Network Summary:\n\n👥 **${userContacts.length} contacts**\n🏢 **${companies.length} companies**\n\nRecent contacts:\n${userContacts.slice(-3).map(c => `• ${c.name} (${c.company})`).join('\n')}\n\nKeep building your network! 💪`;
+          aiResponse = `📊 Your Network Summary:\n\n👥 **${stats.totalContacts} contacts**\n🏢 **${stats.companies} companies**\n\nRecent contacts:\n${stats.recentContacts.map((c: any) => `• ${c.name} (${c.company || 'No company'})`).join('\n') || 'No contacts yet'}\n\nKeep building your network! 💪`;
         } else if (text.toLowerCase().includes('follow') || text.toLowerCase().includes('next') || text.toLowerCase().includes('suggest')) {
-          // Smart follow-up suggestions
-          const userContacts = Array.from(contacts.values()).filter(c => c.userId === userId?.toString());
+          // Smart follow-up suggestions from database
+          const recentContact = await userService.getMostRecentContact(user.id);
           
-          if (userContacts.length > 0) {
-            const recentContact = userContacts[userContacts.length - 1];
+          if (recentContact) {
             aiResponse = `💡 Here are some follow-up suggestions for ${recentContact.name}:\n\n📧 Send a LinkedIn connection request\n☕ Schedule a coffee chat\n📅 Set a reminder to follow up in 2 weeks\n🎯 Ask about their current projects\n\nWould you like me to help you with any of these?`;
           } else {
             aiResponse = `I don't have any recent contacts to suggest follow-ups for. Try adding a contact first by saying "I met [name] at [company]"`;

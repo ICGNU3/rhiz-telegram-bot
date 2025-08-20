@@ -213,12 +213,13 @@ export class ContactImporter {
     );
 
     if (duplicate) {
-      // Update existing contact
+      // Update existing contact with new info
       await db.contacts.update(duplicate.id, {
         email: contact.email || duplicate.email,
         phone: contact.phone || duplicate.phone,
         title: contact.title || duplicate.title,
         notes: contact.notes || duplicate.notes,
+        source: contact.source || duplicate.source,
         updated_at: new Date()
       });
     } else {
