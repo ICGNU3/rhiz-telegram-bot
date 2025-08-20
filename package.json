@@ -19,7 +19,8 @@
     "db:setup": "echo 'Run database/schema.sql in your Supabase project'",
     "db:test": "node -e \"require('./src/db/supabase').testConnection().then(console.log)\"",
     "railway:build": "npm run build && echo 'Railway build completed'",
-    "railway:start": "node railway-start.js"
+    "railway:start": "node railway-start.js",
+    "set-webhook": "node scripts/set-webhook.js"
   },
   "dependencies": {
     "@elevenlabs/elevenlabs-js": "^2.9.0",
