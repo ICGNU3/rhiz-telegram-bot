@@ -15,6 +15,9 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS suspension_reason TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS unsuspended_at TIMESTAMP WITH TIME ZONE;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS unsuspended_by VARCHAR(255);
 
+-- Drop existing policies that depend on subscription_tier first
+DROP POLICY IF EXISTS "Admins can manage all users" ON users;
+
 -- Update subscription_tier to include admin
 ALTER TABLE users ALTER COLUMN subscription_tier TYPE VARCHAR(50);
 
@@ -86,7 +89,7 @@ CREATE POLICY "Users can view own contacts" ON contacts
         AND status = 'approved'
     ));
 
--- Create admin policy for user management
+-- Recreate admin policy for user management
 CREATE POLICY "Admins can manage all users" ON users
     FOR ALL TO authenticated
     USING (
