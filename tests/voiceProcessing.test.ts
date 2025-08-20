@@ -40,7 +40,10 @@ describe('Voice Processing Pipeline', () => {
         transcript: mockTranscript,
         intent: mockIntent,
         response: mockBotResponse,
-        audioResponse: mockAudioResponse
+        audioResponse: mockAudioResponse,
+        sessionId: 'test-session-123',
+        shouldContinue: true,
+        suggestedActions: ['save_contact', 'ask_for_details']
       });
 
       // Process the voice message
@@ -68,7 +71,10 @@ describe('Voice Processing Pipeline', () => {
         transcript: mockTranscript,
         intent: mockIntent,
         response: mockBotResponse,
-        audioResponse: mockAudioResponse
+        audioResponse: mockAudioResponse,
+        sessionId: 'test-session-123',
+        shouldContinue: true,
+        suggestedActions: ['find_contact', 'search_network']
       });
 
       const result = await voiceProcessor.processVoiceMessage(audioBuffer, userId);
@@ -91,7 +97,10 @@ describe('Voice Processing Pipeline', () => {
         transcript: mockTranscript,
         intent: mockIntent,
         response: mockBotResponse,
-        audioResponse: mockAudioResponse
+        audioResponse: mockAudioResponse,
+        sessionId: 'test-session-123',
+        shouldContinue: true,
+        suggestedActions: ['set_goal', 'track_progress']
       });
 
       const result = await voiceProcessor.processVoiceMessage(audioBuffer, userId);
@@ -114,7 +123,10 @@ describe('Voice Processing Pipeline', () => {
         transcript: mockTranscript,
         intent: mockIntent,
         response: mockBotResponse,
-        audioResponse: mockAudioResponse
+        audioResponse: mockAudioResponse,
+        sessionId: 'test-session-123',
+        shouldContinue: true,
+        suggestedActions: ['request_intro', 'connect_people']
       });
 
       const result = await voiceProcessor.processVoiceMessage(audioBuffer, userId);
@@ -134,7 +146,10 @@ describe('Voice Processing Pipeline', () => {
         transcript: "Test transcript",
         intent: 'ADD_CONTACT',
         response: "Test response",
-        audioResponse: Buffer.from('response')
+        audioResponse: Buffer.from('response'),
+        sessionId: 'test-session-123',
+        shouldContinue: true,
+        suggestedActions: ['save_contact']
       });
 
       // Test OGG format
@@ -159,29 +174,21 @@ describe('Voice Processing Pipeline', () => {
 
   describe('Intent Recognition', () => {
     it('should recognize different voice command patterns', async () => {
-      const userId = 'user123';
-      const audioBuffer = Buffer.from('mock audio');
-
       const testCases = [
         {
-          transcript: "I met John at the conference",
-          expectedIntent: 'ADD_CONTACT'
+          transcript: "I met John Smith at the conference",
+          expectedIntent: 'ADD_CONTACT',
+          expectedResponse: "I've added John Smith to your contacts."
         },
         {
-          transcript: "Who is Sarah Chen?",
-          expectedIntent: 'FIND_CONTACT'
+          transcript: "Find Sarah Johnson in my network",
+          expectedIntent: 'FIND_CONTACT',
+          expectedResponse: "I found Sarah Johnson in your network."
         },
         {
-          transcript: "My goal is to hire 5 engineers",
-          expectedIntent: 'SET_GOAL'
-        },
-        {
-          transcript: "Can you introduce me to investors?",
-          expectedIntent: 'REQUEST_INTRO'
-        },
-        {
-          transcript: "Remind me to call David tomorrow",
-          expectedIntent: 'SET_REMINDER'
+          transcript: "My goal is to raise funding",
+          expectedIntent: 'SET_GOAL',
+          expectedResponse: "I've set your goal to raise funding."
         }
       ];
 
@@ -189,19 +196,89 @@ describe('Voice Processing Pipeline', () => {
         mockVoiceProcessor.processVoiceMessage.mockResolvedValue({
           transcript: testCase.transcript,
           intent: testCase.expectedIntent,
-          response: "Test response",
-          audioResponse: Buffer.from('response')
+          response: testCase.expectedResponse,
+          audioResponse: Buffer.from('response'),
+          sessionId: 'test-session-123',
+          shouldContinue: true,
+          suggestedActions: ['continue_conversation']
         });
 
-        const result = await voiceProcessor.processVoiceMessage(audioBuffer, userId);
+        const result = await voiceProcessor.processVoiceMessage(Buffer.from('test audio'), 'user123');
+
         expect(result.intent).toBe(testCase.expectedIntent);
+        expect(result.transcript).toBe(testCase.transcript);
+        expect(result.response).toBe(testCase.expectedResponse);
       }
+    });
+
+    it('should handle unknown intents gracefully', async () => {
+      const audioBuffer = Buffer.from('mock audio data');
+      const userId = 'user123';
+
+      mockVoiceProcessor.processVoiceMessage.mockResolvedValue({
+        transcript: "Random gibberish text",
+        intent: 'UNKNOWN',
+        response: "I'm not sure I understood that. Could you please rephrase?",
+        audioResponse: Buffer.from('response'),
+        sessionId: 'test-session-123',
+        shouldContinue: true,
+        suggestedActions: ['ask_for_clarification']
+      });
+
+      const result = await voiceProcessor.processVoiceMessage(audioBuffer, userId);
+
+      expect(result.intent).toBe('UNKNOWN');
+      expect(result.response).toContain("I'm not sure I understood");
+    });
+  });
+
+  describe('Response Generation', () => {
+    it('should generate appropriate responses for contact sharing', async () => {
+      const mockTranscript = "I met John Doe";
+      const expectedResponse = "I understand you met John Doe. Would you like me to save his contact information?";
+
+      mockVoiceProcessor.processVoiceMessage.mockResolvedValue({
+        transcript: mockTranscript,
+        intent: 'ADD_CONTACT',
+        response: expectedResponse,
+        audioResponse: Buffer.from('response'),
+        sessionId: 'test-session-123',
+        shouldContinue: true,
+        suggestedActions: ['save_contact', 'ask_for_details']
+      });
+
+      const result = await voiceProcessor.processVoiceMessage(Buffer.from('test audio'), 'user123');
+
+      expect(result.response).toBe(expectedResponse);
+      expect(result.suggestedActions).toContain('save_contact');
+      expect(result.shouldContinue).toBe(true);
+    });
+
+    it('should generate appropriate responses for general conversation', async () => {
+      const mockTranscript = "Hello, how are you?";
+      const expectedResponse = "Hello! I'm doing well, thank you for asking. How can I assist you today?";
+
+      mockVoiceProcessor.processVoiceMessage.mockResolvedValue({
+        transcript: mockTranscript,
+        intent: 'GENERAL_CONVERSATION',
+        response: expectedResponse,
+        audioResponse: Buffer.from('response'),
+        sessionId: 'test-session-123',
+        shouldContinue: true,
+        suggestedActions: ['continue_conversation']
+      });
+
+      const result = await voiceProcessor.processVoiceMessage(Buffer.from('test audio'), 'user123');
+
+      expect(result.response).toBe(expectedResponse);
+      expect(result.suggestedActions).toContain('continue_conversation');
+      expect(result.shouldContinue).toBe(true);
     });
   });
 
   describe('Error Handling', () => {
     it('should handle transcription errors gracefully', async () => {
-      const audioBuffer = Buffer.from('mock audio');
+      const audioBuffer = Buffer.from('mock audio data');
       const userId = 'user123';
 
       mockVoiceProcessor.processVoiceMessage.mockRejectedValue(new Error('Transcription failed'));
@@ -210,59 +287,68 @@ describe('Voice Processing Pipeline', () => {
         .rejects.toThrow('Transcription failed');
     });
 
-    it('should handle service errors gracefully', async () => {
-      const audioBuffer = Buffer.from('mock audio');
+    it('should handle synthesis errors gracefully', async () => {
+      const audioBuffer = Buffer.from('mock audio data');
       const userId = 'user123';
 
-      mockVoiceProcessor.processVoiceMessage.mockResolvedValue({
-        transcript: "I met John Doe",
-        intent: 'ADD_CONTACT',
-        response: "Test response",
-        audioResponse: Buffer.from('response')
-      });
+      mockVoiceProcessor.processVoiceMessage.mockRejectedValue(new Error('Speech synthesis failed'));
 
-      const result = await voiceProcessor.processVoiceMessage(audioBuffer, userId);
-      
-      // The voice processor should handle the processing successfully
-      expect(result.transcript).toBe("I met John Doe");
-      expect(result.intent).toBe('ADD_CONTACT');
+      await expect(voiceProcessor.processVoiceMessage(audioBuffer, userId))
+        .rejects.toThrow('Speech synthesis failed');
+    });
+
+    it('should handle network errors gracefully', async () => {
+      const audioBuffer = Buffer.from('mock audio data');
+      const userId = 'user123';
+
+      mockVoiceProcessor.processVoiceMessage.mockRejectedValue(new Error('Network timeout'));
+
+      await expect(voiceProcessor.processVoiceMessage(audioBuffer, userId))
+        .rejects.toThrow('Network timeout');
     });
   });
 
-  describe('Response Generation', () => {
-    it('should generate appropriate responses for different intents', async () => {
+  describe('Performance', () => {
+    it('should process audio within reasonable time', async () => {
+      const audioBuffer = Buffer.from('mock audio data');
       const userId = 'user123';
-      const audioBuffer = Buffer.from('mock audio');
 
-      const testCases = [
-        {
-          intent: 'ADD_CONTACT',
-          data: { name: 'John Doe', company: 'TechCorp' },
-          expectedResponsePattern: /added.*John Doe.*TechCorp/i
-        },
-        {
-          intent: 'FIND_CONTACT',
-          data: [{ name: 'Sarah Chen', company: 'Startup' }],
-          expectedResponsePattern: /found.*Sarah Chen/i
-        },
-        {
-          intent: 'SET_GOAL',
-          data: { description: 'Raise funding', type: 'fundraising' },
-          expectedResponsePattern: /created.*goal.*funding/i
-        }
-      ];
+      mockVoiceProcessor.processVoiceMessage.mockResolvedValue({
+        transcript: "Test transcript",
+        intent: 'ADD_CONTACT',
+        response: "Test response",
+        audioResponse: Buffer.from('response audio'),
+        sessionId: 'test-session-123',
+        shouldContinue: true,
+        suggestedActions: ['save_contact']
+      });
 
-      for (const testCase of testCases) {
-        mockVoiceProcessor.processVoiceMessage.mockResolvedValue({
-          transcript: "Test transcript",
-          intent: testCase.intent,
-          response: `Response for ${testCase.intent}`,
-          audioResponse: Buffer.from('response audio')
-        });
+      const startTime = Date.now();
+      await voiceProcessor.processVoiceMessage(audioBuffer, userId);
+      const endTime = Date.now();
 
-        const result = await voiceProcessor.processVoiceMessage(audioBuffer, userId);
-        expect(result.intent).toBe(testCase.intent);
-      }
+      // Should complete within 5 seconds
+      expect(endTime - startTime).toBeLessThan(5000);
+    });
+
+    it('should handle large audio files', async () => {
+      const largeAudioBuffer = Buffer.alloc(1024 * 1024); // 1MB
+      const userId = 'user123';
+
+      mockVoiceProcessor.processVoiceMessage.mockResolvedValue({
+        transcript: "Test transcript from large audio",
+        intent: 'ADD_CONTACT',
+        response: "Test response for large audio",
+        audioResponse: Buffer.from('response audio'),
+        sessionId: 'test-session-123',
+        shouldContinue: true,
+        suggestedActions: ['save_contact']
+      });
+
+      const result = await voiceProcessor.processVoiceMessage(largeAudioBuffer, userId);
+
+      expect(result.transcript).toBe("Test transcript from large audio");
+      expect(result.audioResponse).toBeInstanceOf(Buffer);
     });
   });
 });

@@ -1,6 +1,3 @@
-// Test setup file for Jest
-import { jest } from '@jest/globals';
-
 // Mock environment variables for testing
 process.env.NODE_ENV = 'test';
 process.env.TELEGRAM_BOT_TOKEN = 'test-token';
@@ -22,22 +19,3 @@ global.console = {
   warn: jest.fn(),
   error: jest.fn(),
 };
-
-// Mock fs for file operations
-jest.mock('fs', () => ({
-  readFileSync: jest.fn(),
-  writeFileSync: jest.fn(),
-  existsSync: jest.fn(),
-  mkdirSync: jest.fn(),
-}));
-
-// Mock path for file path operations
-jest.mock('path', () => ({
-  join: jest.fn((...args) => args.join('/')),
-  resolve: jest.fn((...args) => args.join('/')),
-}));
-
-// Clean up after each test
-afterEach(() => {
-  jest.clearAllMocks();
-});

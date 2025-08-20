@@ -1,3 +1,4 @@
+import { describe, it, expect, beforeEach } from '@jest/globals';
 import conversationManager from '../src/voice/conversationManager';
 
 describe('ConversationManager', () => {

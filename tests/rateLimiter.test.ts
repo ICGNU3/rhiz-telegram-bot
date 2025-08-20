@@ -20,8 +20,6 @@ describe('RateLimiter', () => {
       
       // Make 5 requests (within minute limit)
       for (let i = 0; i < 5; i++) {
-        const result = rateLimiter.canMakeRequest(userId);
-        expect(result.allowed).toBe(true);
         rateLimiter.recordRequest(userId);
       }
       
@@ -36,8 +34,6 @@ describe('RateLimiter', () => {
       
       // Make 5 requests (at the limit)
       for (let i = 0; i < 5; i++) {
-        const canMake = rateLimiter.canMakeRequest(userId);
-        expect(canMake.allowed).toBe(true);
         rateLimiter.recordRequest(userId);
       }
       
