@@ -11,6 +11,8 @@ import introductionService from './services/introductions';
 import commandHandler from './bot/commandHandler';
 import contactImporter from './bot/contactImporter';
 import userService from './services/userService';
+import authService from './middleware/authorization';
+import adminCommands from './bot/adminCommands';
 import { 
   webhookRateLimit, 
   apiRateLimit, 
@@ -61,15 +63,67 @@ app.post('/webhook/:botToken', webhookRateLimit, voiceMessageSizeLimit, cleanupR
       logger.info(`Received message from ${message.from?.username}: ${text}`);
       
       try {
-        // Get or create user in database
-        const user = await userService.getOrCreateUser({
-          telegram_id: userId!,
+        // Check user authorization first
+        const authResult = await authService.checkUserAuthorization(userId!, {
           username: message.from?.username,
           first_name: message.from?.first_name,
           last_name: message.from?.last_name
         });
         
-        // Check if it's a command first
+        if (!authResult.authorized) {
+          // Send authorization message and return
+          const response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: authResult.message,
+              parse_mode: 'Markdown'
+            })
+          });
+          
+          if (!response.ok) {
+            logger.error('Failed to send authorization response:', await response.text());
+          }
+          
+          res.status(200).json({ status: 'ok' });
+          return;
+        }
+        
+        const user = authResult.user;
+        
+        // Check for admin commands first
+        if (adminCommands.isAdminCommand(text)) {
+          const adminResponse = await adminCommands.handleAdminCommand(text, {
+            chatId,
+            userId: userId!,
+            username: message.from?.username,
+            args: text.split(' ').slice(1)
+          });
+          
+          const response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: adminResponse,
+              parse_mode: 'Markdown'
+            })
+          });
+          
+          if (!response.ok) {
+            logger.error('Failed to send admin response:', await response.text());
+          }
+          
+          res.status(200).json({ status: 'ok' });
+          return;
+        }
+        
+        // Check if it's a regular command
         if (commandHandler.isCommand(text)) {
           const aiResponse = await commandHandler.handleCommand(text, {
             chatId,
