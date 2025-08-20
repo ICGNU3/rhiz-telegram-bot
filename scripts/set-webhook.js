@@ -15,7 +15,7 @@ async function setWebhook() {
     process.exit(1);
   }
 
-  const webhookUrl = `https://rhiz.railway.app/webhook/${botToken}`;
+  const webhookUrl = `https://rhiz.up.railway.app/webhook/${botToken}`;
   const apiUrl = `https://api.telegram.org/bot${botToken}/setWebhook`;
   
   console.log('🔗 Setting webhook URL...');
@@ -67,7 +67,7 @@ async function testHealthEndpoint() {
   console.log('\n🏥 Testing health endpoint...');
   
   try {
-    const response = await fetch('https://rhiz.railway.app/health');
+    const response = await fetch('https://rhiz.up.railway.app/health');
     const result = await response.json();
     
     if (response.ok && result.status === 'ok') {
@@ -89,7 +89,7 @@ async function main() {
   await setWebhook();
   
   console.log('\n🎉 Setup complete!');
-  console.log('📱 Your bot should now be receiving messages at https://rhiz.railway.app');
+  console.log('📱 Your bot should now be receiving messages at https://rhiz.up.railway.app');
   console.log('💬 Try sending a message to your bot to test!');
 }
 

@@ -244,7 +244,7 @@ Just paste your contacts and I'll import them!`;
     // In production, you'd generate an OAuth URL here
     const googleAuthUrl = `https://accounts.google.com/o/oauth2/v2/auth?` +
       `client_id=${process.env.GOOGLE_CLIENT_ID || 'YOUR_CLIENT_ID'}&` +
-      `redirect_uri=${process.env.GOOGLE_REDIRECT_URI || 'https://rhiz.railway.app/auth/google/callback'}&` +
+      `redirect_uri=${process.env.GOOGLE_REDIRECT_URI || 'https://rhiz.up.railway.app/auth/google/callback'}&` +
       `response_type=code&` +
       `scope=https://www.googleapis.com/auth/contacts.readonly&` +
       `state=${userId}`;
