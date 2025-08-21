@@ -3,6 +3,7 @@ import config from '../utils/config';
 import logger from '../utils/logger';
 import rateLimiter from '../utils/rateLimiter';
 import { SYSTEM_PROMPTS, INTENT_PATTERNS } from './prompts';
+import { modelSelector } from './model-registry';
 
 // Response caching for frequently used queries
 const responseCache = new Map<string, { data: any; timestamp: number }>();
@@ -86,8 +87,18 @@ export class GPT4Service {
   }
   async extractContactInfo(transcript: string): Promise<any> {
     try {
+      // Use model registry for intelligent model selection with robust fallback
+      let model: string;
+      try {
+        model = modelSelector.getOptimalModel('contact_extraction') || config.openai.model;
+      } catch (error) {
+        logger.warn('Model selector failed, using default model:', error);
+        model = config.openai.model;
+      }
+      const startTime = Date.now();
+      
       const response = await openai.chat.completions.create({
-        model: config.openai.model,
+        model: model,
         messages: [
           { role: 'system', content: SYSTEM_PROMPTS.contactExtraction },
           { role: 'user', content: transcript }
@@ -95,6 +106,13 @@ export class GPT4Service {
         temperature: 0.3,
         response_format: { type: 'json_object' },
       });
+      
+      // Record performance for future optimization
+      try {
+        modelSelector.recordPerformance(model, Date.now() - startTime, true);
+      } catch (error) {
+        logger.warn('Failed to record performance metrics:', error);
+      }
 
       const content = response.choices[0]?.message?.content;
       if (!content) throw new Error('No response from GPT-4');
@@ -108,8 +126,17 @@ export class GPT4Service {
 
   async analyzeGoal(goalDescription: string): Promise<any> {
     try {
+      let model: string;
+      try {
+        model = modelSelector.getOptimalModel('goal_analysis') || config.openai.model;
+      } catch (error) {
+        logger.warn('Model selector failed, using default model:', error);
+        model = config.openai.model;
+      }
+      const startTime = Date.now();
+      
       const response = await openai.chat.completions.create({
-        model: config.openai.model,
+        model: model,
         messages: [
           { role: 'system', content: SYSTEM_PROMPTS.goalAnalysis },
           { role: 'user', content: goalDescription }
@@ -117,6 +144,12 @@ export class GPT4Service {
         temperature: 0.5,
         response_format: { type: 'json_object' },
       });
+      
+      try {
+        modelSelector.recordPerformance(model, Date.now() - startTime, true);
+      } catch (error) {
+        logger.warn('Failed to record performance metrics:', error);
+      }
 
       const content = response.choices[0]?.message?.content;
       if (!content) throw new Error('No response from GPT-4');
@@ -139,18 +172,33 @@ Total Interactions: ${interactions.length}
 Recent Interactions: ${JSON.stringify(interactions.slice(0, 5))}
       `;
 
+      let model: string;
+      try {
+        model = modelSelector.getOptimalModel('relationship_scoring') || config.openai.model;
+      } catch (error) {
+        logger.warn('Model selector failed, using default model:', error);
+        model = config.openai.model;
+      }
+      const startTime = Date.now();
+
       const response = await openai.chat.completions.create({
-        model: config.openai.model,
+        model: model,
         messages: [
           { role: 'system', content: SYSTEM_PROMPTS.relationshipScoring },
           { role: 'user', content: context }
         ],
-        temperature: 0.4,
+        temperature: 0.3,
         response_format: { type: 'json_object' },
       });
+      
+      try {
+        modelSelector.recordPerformance(model, Date.now() - startTime, true);
+      } catch (error) {
+        logger.warn('Failed to record performance metrics:', error);
+      }
 
       const content = response.choices[0]?.message?.content;
-      if (!content) throw new Error('No response from GPT-4');
+      if (!content) throw new Error('No response from GPT');
 
       return JSON.parse(content);
     } catch (error) {
@@ -167,8 +215,17 @@ To: ${toContact.name} (${toContact.title} at ${toContact.company})
 Reason: ${reason}
       `;
 
+      let model: string;
+      try {
+        model = modelSelector.getOptimalModel('introduction_generation') || config.openai.model;
+      } catch (error) {
+        logger.warn('Model selector failed, using default model:', error);
+        model = config.openai.model;
+      }
+      const startTime = Date.now();
+
       const response = await openai.chat.completions.create({
-        model: config.openai.model,
+        model: model,
         messages: [
           { role: 'system', content: SYSTEM_PROMPTS.introductionSuggestion },
           { role: 'user', content: context }
@@ -176,6 +233,12 @@ Reason: ${reason}
         temperature: 0.7,
         max_tokens: 300,
       });
+      
+      try {
+        modelSelector.recordPerformance(model, Date.now() - startTime, true);
+      } catch (error) {
+        logger.warn('Failed to record performance metrics:', error);
+      }
 
       return response.choices[0]?.message?.content || '';
     } catch (error) {
@@ -185,15 +248,49 @@ Reason: ${reason}
   }
 
   async detectIntent(transcript: string): Promise<string> {
-    const lowerTranscript = transcript.toLowerCase();
-    
-    for (const [intent, patterns] of Object.entries(INTENT_PATTERNS)) {
-      if (patterns.some(pattern => lowerTranscript.includes(pattern))) {
-        return intent;
+    try {
+      // Use model selector for intent detection
+      let model: string;
+      try {
+        model = modelSelector.getOptimalModel('intent_detection') || config.openai.model;
+      } catch (error) {
+        logger.warn('Model selector failed, using default model:', error);
+        model = config.openai.model;
       }
+      const startTime = Date.now();
+
+      const response = await openai.chat.completions.create({
+        model: model,
+        messages: [
+          { role: 'system', content: 'You are an intent detection system. Analyze the user input and return the most likely intent as a single word from: ADD_CONTACT, UPDATE_CONTACT, FIND_CONTACT, SET_GOAL, REQUEST_INTRO, SCHEDULE_FOLLOWUP, ANALYZE_RELATIONSHIP, GENERAL_QUERY' },
+          { role: 'user', content: transcript }
+        ],
+        temperature: 0.1,
+        max_tokens: 20,
+      });
+      
+      try {
+        modelSelector.recordPerformance(model, Date.now() - startTime, true);
+      } catch (error) {
+        logger.warn('Failed to record performance metrics:', error);
+      }
+
+      const intent = response.choices[0]?.message?.content?.trim() || 'GENERAL_QUERY';
+      return intent;
+    } catch (error) {
+      logger.error('Error detecting intent with AI, falling back to pattern matching:', error);
+      
+      // Fallback to pattern matching
+      const lowerTranscript = transcript.toLowerCase();
+      
+      for (const [intent, patterns] of Object.entries(INTENT_PATTERNS)) {
+        if (patterns.some(pattern => lowerTranscript.includes(pattern))) {
+          return intent;
+        }
+      }
+      
+      return 'GENERAL_QUERY';
     }
-    
-    return 'GENERAL';
   }
 
   async generateVoiceResponse(context: string, userMessage: string, userId?: string): Promise<string> {
@@ -208,8 +305,17 @@ Reason: ${reason}
         rateLimiter.recordOpenAIRequest(userId);
       }
 
+      let model: string;
+      try {
+        model = modelSelector.getOptimalModel('basic_response') || config.openai.model;
+      } catch (error) {
+        logger.warn('Model selector failed, using default model:', error);
+        model = config.openai.model;
+      }
+      const startTime = Date.now();
+
       const response = await openai.chat.completions.create({
-        model: config.openai.model,
+        model: model,
         messages: [
           { role: 'system', content: SYSTEM_PROMPTS.voicePersonality },
           { role: 'user', content: `Context: ${context}\n\nUser said: ${userMessage}` }
@@ -217,6 +323,12 @@ Reason: ${reason}
         temperature: 0.7,
         max_tokens: 150,
       });
+      
+      try {
+        modelSelector.recordPerformance(model, Date.now() - startTime, true);
+      } catch (error) {
+        logger.warn('Failed to record performance metrics:', error);
+      }
 
       return response.choices[0]?.message?.content || 'I understand. How else can I help you?';
     } catch (error) {

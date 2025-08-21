@@ -1,6 +1,7 @@
 import authService from '../middleware/authorization';
 import db from '../db/supabase';
 import logger from '../utils/logger';
+import { modelMonitor } from '../ai/model-monitor';
 
 interface AdminCommandContext {
   chatId: number;
@@ -51,6 +52,9 @@ export class AdminCommandHandler {
         
       case '/list_admins':
         return this.listAdmins();
+        
+      case '/models':
+        return await this.getModelStatus();
         
       default:
         return `❌ Unknown admin command: ${command}\n\nType /admin_help for available commands.`;
@@ -279,6 +283,41 @@ Total: ${admins.length} admins
 
 **Add Admin:**
 Set \`ADMIN_TELEGRAM_IDS\` environment variable in Railway.`;
+  }
+  
+  private async getModelStatus(): Promise<string> {
+    try {
+      const report = modelMonitor.getModelReport();
+      
+      let response = '🤖 **AI Model Status**\n\n';
+      
+      // Current model assignments
+      response += '**Current Models:**\n';
+      Object.entries(report.currentModels).forEach(([task, model]) => {
+        response += `• ${task}: ${model}\n`;
+      });
+      
+      // Performance metrics if available
+      if (Object.keys(report.performance).length > 0) {
+        response += '\n**Performance:**\n';
+        Object.entries(report.performance).forEach(([model, metrics]) => {
+          response += `• ${model}: ${metrics.successRate} success, ${metrics.avgLatency}ms avg\n`;
+        });
+      }
+      
+      // Recommendations
+      if (report.recommendations.length > 0) {
+        response += '\n**Recommendations:**\n';
+        report.recommendations.slice(0, 3).forEach(rec => {
+          response += `• ${rec}\n`;
+        });
+      }
+      
+      return response;
+    } catch (error) {
+      logger.error('Error getting model status:', error);
+      return '❌ Error retrieving model status.';
+    }
   }
   
   isAdminCommand(command: string): boolean {

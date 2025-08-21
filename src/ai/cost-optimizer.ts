@@ -1,4 +1,5 @@
 import logger from '../utils/logger';
+import { modelSelector, getModelForTask } from './model-registry';
 
 export interface CostMetrics {
   tokenUsage: {
@@ -142,23 +143,8 @@ export class CostOptimizer {
 
   // Use cheaper models for simple tasks
   getOptimalModel(task: string, complexity: 'low' | 'medium' | 'high'): string {
-    const modelTiers = {
-      low: 'gpt-3.5-turbo',      // $0.0005/1K tokens
-      medium: 'gpt-4-turbo',     // $0.01/1K tokens  
-      high: 'gpt-4'              // $0.03/1K tokens
-    };
-    
-    // Task-specific model selection
-    const taskComplexity: { [key: string]: string } = {
-      'intent_detection': 'low',
-      'contact_extraction': 'medium',
-      'relationship_scoring': 'medium',
-      'introduction_generation': 'high',
-      'conversation_analysis': 'high'
-    };
-    
-    const recommendedComplexity = taskComplexity[task] || complexity;
-    return modelTiers[recommendedComplexity as keyof typeof modelTiers];
+    // Now delegates to the new model registry for intelligent selection
+    return getModelForTask(task, complexity);
   }
 
   // Monitor and alert on cost thresholds
