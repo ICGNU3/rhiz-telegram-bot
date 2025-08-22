@@ -69,66 +69,56 @@ export class ModelSelector {
   private performanceMetrics: Map<string, { avgLatency: number; successRate: number }> = new Map();
   
   /**
-   * Get the best model for a specific task
-   * Falls back gracefully if optimal model unavailable
+   * Get the optimal model for a specific task
    */
-  getOptimalModel(task: string, requirements?: TaskRequirements): string {
-    // Check for manual override first (for testing new models)
-    const override = this.modelOverrides.get(task);
-    if (override) {
-      logger.info(`Using override model ${override} for task ${task}`);
-      return override;
+  getOptimalModel(task: string, complexity: 'simple' | 'medium' | 'complex' = 'medium'): string {
+    try {
+      // Check if we have performance data for this task
+      const taskPerformance = this.performanceData.get(task);
+      
+      if (taskPerformance && taskPerformance.length > 0) {
+        // Use the best performing model for this task
+        const bestModel = taskPerformance.reduce((best, current) => 
+          current.successRate > best.successRate ? current : best
+        );
+        
+        if (bestModel.successRate > 0.8) {
+          return bestModel.model;
+        }
+      }
+
+      // Fallback to complexity-based selection
+      return this.getModelByComplexity(complexity);
+    } catch (error) {
+      logger.error('Error in model selection, using fallback:', error);
+      return this.getModelByComplexity(complexity);
+    }
+  }
+
+  /**
+   * Compare two models for a specific task
+   */
+  compareModels(_nameA: string, _nameB: string, task: string): {
+    modelA: ModelPerformance;
+    modelB: ModelPerformance;
+    recommendation: string;
+  } {
+    const modelA = this.getModelPerformance(_nameA, task);
+    const modelB = this.getModelPerformance(_nameB, task);
+    
+    let recommendation = 'Both models perform similarly';
+    
+    if (modelA.successRate > modelB.successRate + 0.1) {
+      recommendation = `${_nameA} performs significantly better`;
+    } else if (modelB.successRate > modelA.successRate + 0.1) {
+      recommendation = `${_nameB} performs significantly better`;
+    } else if (modelA.avgResponseTime < modelB.avgResponseTime * 0.8) {
+      recommendation = `${_nameA} is faster`;
+    } else if (modelB.avgResponseTime < modelA.avgResponseTime * 0.8) {
+      recommendation = `${_nameB} is faster`;
     }
     
-    // Default requirements if not specified
-    const req = requirements || this.getDefaultRequirements(task);
-    
-    // Map complexity to quality needs
-    const qualityMap: Record<TaskComplexity, ModelCapabilities['quality'][]> = {
-      simple: ['basic', 'standard'],
-      moderate: ['standard', 'advanced'],
-      complex: ['advanced', 'premium'],
-      critical: ['premium']
-    };
-    
-    const acceptableQualities = qualityMap[req.complexity];
-    
-    // Filter and sort models by requirements
-    const candidates = Object.entries(MODEL_REGISTRY)
-      .filter(([name, caps]) => {
-        // Filter by quality
-        if (!acceptableQualities.includes(caps.quality)) return false;
-        
-        // Filter by required features
-        if (req.needsJson && !caps.features.json) return false;
-        if (req.needsFunctions && !caps.features.functions) return false;
-        if (req.needsVision && !caps.features.vision) return false;
-        
-        return true;
-      })
-      .sort(([nameA, capsA], [nameB, capsB]) => {
-        // Sort by preference
-        if (req.preferSpeed) {
-          const speedOrder = { fast: 0, medium: 1, slow: 2 };
-          return speedOrder[capsA.speed] - speedOrder[capsB.speed];
-        }
-        
-        if (req.preferQuality) {
-          const qualityOrder = { premium: 0, advanced: 1, standard: 2, basic: 3 };
-          return qualityOrder[capsA.quality] - qualityOrder[capsB.quality];
-        }
-        
-        // Default: balance cost and quality
-        const costA = capsA.costPer1kTokens.input + capsA.costPer1kTokens.output;
-        const costB = capsB.costPer1kTokens.input + capsB.costPer1kTokens.output;
-        return costA - costB;
-      });
-    
-    // Return best candidate or safe fallback
-    const selected = candidates[0]?.[0] || 'gpt-3.5-turbo';
-    
-    logger.debug(`Selected model ${selected} for task ${task} with complexity ${req.complexity}`);
-    return selected;
+    return { modelA, modelB, recommendation };
   }
   
   /**

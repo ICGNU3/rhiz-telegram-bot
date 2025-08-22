@@ -1,673 +1,411 @@
 import OpenAI from 'openai';
 import config from '../utils/config';
 import logger from '../utils/logger';
-import rateLimiter from '../utils/rateLimiter';
-import { SYSTEM_PROMPTS, INTENT_PATTERNS } from './prompts';
 import { modelSelector } from './model-registry';
 
-// Response caching for frequently used queries
-const responseCache = new Map<string, { data: any; timestamp: number }>();
-const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
-
-// Rate limiting and retry logic
-const API_RETRY_ATTEMPTS = 3;
-const API_RETRY_DELAY = 1000;
-
+// Initialize OpenAI client
 const openai = new OpenAI({
   apiKey: config.openai.apiKey,
 });
 
-export class GPT4Service {
-  private embeddingCache = new Map<string, number[]>();
-  private requestQueue: Array<() => Promise<any>> = [];
-  private isProcessingQueue = false;
+// Simple response cache for frequently asked questions
+const responseCache = new Map<string, { response: string; timestamp: number }>();
+const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
 
-  // Cached embedding lookup
-  private async getCachedEmbedding(text: string): Promise<number[]> {
-    const cacheKey = text.trim().toLowerCase();
-    if (this.embeddingCache.has(cacheKey)) {
-      return this.embeddingCache.get(cacheKey)!;
-    }
-    
-    const embedding = await this.createEmbedding(text);
-    this.embeddingCache.set(cacheKey, embedding);
-    return embedding;
-  }
+interface VoiceProcessingResult {
+  sessionId: string;
+  shouldContinue: boolean;
+  suggestedActions: string[];
+  transcript: string;
+  intent: string;
+  confidence: number;
+  entities: Record<string, any>;
+  response: string;
+}
 
-  // Queue management for API calls
-  private async queueRequest<T>(requestFn: () => Promise<T>): Promise<T> {
-    return new Promise((resolve, reject) => {
-      this.requestQueue.push(async () => {
-        try {
-          const result = await requestFn();
-          resolve(result);
-        } catch (error) {
-          reject(error);
-        }
-      });
-      this.processQueue();
-    });
-  }
+interface ContactExtractionResult {
+  name?: string;
+  company?: string;
+  title?: string;
+  email?: string;
+  phone?: string;
+  confidence: number;
+}
 
-  private async processQueue(): Promise<void> {
-    if (this.isProcessingQueue || this.requestQueue.length === 0) return;
-    
-    this.isProcessingQueue = true;
-    while (this.requestQueue.length > 0) {
-      const request = this.requestQueue.shift()!;
-      try {
-        await request();
-        // Add small delay to respect rate limits
-        await new Promise(resolve => setTimeout(resolve, 100));
-      } catch (error) {
-        logger.error('Queue request failed:', error);
-      }
-    }
-    this.isProcessingQueue = false;
-  }
+interface GoalExtractionResult {
+  description: string;
+  targetDate?: string;
+  priority: 'low' | 'medium' | 'high';
+  category: string;
+  confidence: number;
+}
 
-  // Retry mechanism with exponential backoff
-  private async retryRequest<T>(requestFn: () => Promise<T>, attempts = API_RETRY_ATTEMPTS): Promise<T> {
-    for (let i = 0; i < attempts; i++) {
-      try {
-        return await requestFn();
-      } catch (error: any) {
-        if (i === attempts - 1) throw error;
-        
-        // Only retry on rate limit or temporary errors
-        if (error.status === 429 || error.status >= 500) {
-          const delay = API_RETRY_DELAY * Math.pow(2, i);
-          await new Promise(resolve => setTimeout(resolve, delay));
-          continue;
-        }
-        throw error;
-      }
-    }
-    throw new Error('Max retry attempts reached');
-  }
-  async extractContactInfo(transcript: string): Promise<any> {
+class GPT4Service {
+  /**
+   * Generate a response using the optimal model for the task
+   */
+  async generateResponse(prompt: string, context?: any): Promise<string> {
     try {
-      // Use model registry for intelligent model selection with robust fallback
-      let model: string;
-      try {
-        model = modelSelector.getOptimalModel('contact_extraction') || config.openai.model;
-      } catch (error) {
-        logger.warn('Model selector failed, using default model:', error);
-        model = config.openai.model;
-      }
-      const startTime = Date.now();
+      const model = modelSelector.getOptimalModel('general_response', 'medium');
       
-      const response = await openai.chat.completions.create({
-        model: model,
+      const completion = await openai.chat.completions.create({
+        model,
         messages: [
-          { role: 'system', content: SYSTEM_PROMPTS.contactExtraction },
-          { role: 'user', content: transcript }
+          {
+            role: 'system',
+            content: 'You are a helpful AI assistant focused on relationship management and networking. Provide clear, actionable responses.'
+          },
+          {
+            role: 'user',
+            content: prompt
+          }
         ],
-        temperature: 0.3,
-        response_format: { type: 'json_object' },
+        max_tokens: 500,
+        temperature: 0.7,
       });
+
+      const response = completion.choices[0]?.message?.content || 'I apologize, but I couldn\'t generate a response.';
       
-      // Record performance for future optimization
+      logger.info(`Generated response using ${model}`, {
+        promptLength: prompt.length,
+        responseLength: response.length,
+        tokensUsed: completion.usage?.total_tokens
+      });
+
+      return response;
+    } catch (error) {
+      logger.error('Error generating response:', error);
+      return 'I apologize, but I encountered an error while processing your request. Please try again.';
+    }
+  }
+
+  /**
+   * Process voice input and extract information
+   */
+  async processVoiceInput(audioBuffer: Buffer, userId: string, context?: any): Promise<VoiceProcessingResult> {
+    try {
+      // Convert audio to text using Whisper
+      const transcript = await this.transcribeAudio(audioBuffer);
+      
+      // Detect intent and extract entities
+      const intentResult = await this.detectIntent(transcript);
+      
+      // Generate appropriate response
+      const response = await this.generateContextualResponse(transcript, intentResult, context);
+      
+      return {
+        sessionId: `session_${userId}_${Date.now()}`,
+        shouldContinue: intentResult.confidence > 0.7,
+        suggestedActions: this.getSuggestedActions(intentResult.intent),
+        transcript,
+        intent: intentResult.intent,
+        confidence: intentResult.confidence,
+        entities: intentResult.entities,
+        response
+      };
+    } catch (error) {
+      logger.error('Error processing voice input:', error);
+      return {
+        sessionId: `session_${userId}_${Date.now()}`,
+        shouldContinue: false,
+        suggestedActions: ['Try again', 'Use text input'],
+        transcript: '',
+        intent: 'error',
+        confidence: 0,
+        entities: {},
+        response: 'I encountered an error processing your voice message. Please try again or use text input.'
+      };
+    }
+  }
+
+  /**
+   * Transcribe audio using Whisper
+   */
+  private async transcribeAudio(audioBuffer: Buffer): Promise<string> {
+    try {
+      const transcription = await openai.audio.transcriptions.create({
+        file: new File([audioBuffer], 'audio.wav', { type: 'audio/wav' }),
+        model: config.openai.whisperModel,
+        response_format: 'text'
+      });
+
+      return transcription;
+    } catch (error) {
+      logger.error('Error transcribing audio:', error);
+      throw new Error('Failed to transcribe audio');
+    }
+  }
+
+  /**
+   * Detect intent from text
+   */
+  private async detectIntent(text: string): Promise<{
+    intent: string;
+    confidence: number;
+    entities: Record<string, any>;
+  }> {
+    try {
+      const model = modelSelector.getOptimalModel('intent_detection', 'simple');
+      
+      const completion = await openai.chat.completions.create({
+        model,
+        messages: [
+          {
+            role: 'system',
+            content: 'Analyze the user\'s intent and extract key information. Return a JSON object with intent, confidence (0-1), and entities.'
+          },
+          {
+            role: 'user',
+            content: text
+          }
+        ],
+        max_tokens: 200,
+        temperature: 0.3,
+      });
+
+      const response = completion.choices[0]?.message?.content || '{}';
+      
       try {
-        modelSelector.recordPerformance(model, Date.now() - startTime, true);
-      } catch (error) {
-        logger.warn('Failed to record performance metrics:', error);
+        const result = JSON.parse(response);
+        return {
+          intent: result.intent || 'unknown',
+          confidence: result.confidence || 0.5,
+          entities: result.entities || {}
+        };
+      } catch {
+        // Fallback to pattern matching
+        return this.fallbackIntentDetection(text);
       }
+    } catch (error) {
+      logger.error('Error detecting intent:', error);
+      return this.fallbackIntentDetection(text);
+    }
+  }
 
-      const content = response.choices[0]?.message?.content;
-      if (!content) throw new Error('No response from GPT-4');
+  /**
+   * Fallback intent detection using pattern matching
+   */
+  private fallbackIntentDetection(text: string): {
+    intent: string;
+    confidence: number;
+    entities: Record<string, any>;
+  } {
+    const lowerText = text.toLowerCase();
+    
+    if (lowerText.includes('met') || lowerText.includes('introduced') || lowerText.includes('contact')) {
+      return {
+        intent: 'add_contact',
+        confidence: 0.8,
+        entities: { action: 'add_contact' }
+      };
+    }
+    
+    if (lowerText.includes('find') || lowerText.includes('search') || lowerText.includes('who')) {
+      return {
+        intent: 'find_contact',
+        confidence: 0.7,
+        entities: { action: 'search' }
+      };
+    }
+    
+    if (lowerText.includes('goal') || lowerText.includes('objective') || lowerText.includes('target')) {
+      return {
+        intent: 'set_goal',
+        confidence: 0.8,
+        entities: { action: 'set_goal' }
+      };
+    }
+    
+    return {
+      intent: 'general_conversation',
+      confidence: 0.5,
+      entities: {}
+    };
+  }
 
-      return JSON.parse(content);
+  /**
+   * Generate contextual response based on intent
+   */
+  private async generateContextualResponse(
+    transcript: string, 
+    intentResult: { intent: string; confidence: number; entities: Record<string, any> },
+    context?: any
+  ): Promise<string> {
+    const model = modelSelector.getOptimalModel('response_generation', 'medium');
+    
+    const prompt = `Based on the user's message: "${transcript}"
+Intent: ${intentResult.intent}
+Confidence: ${intentResult.confidence}
+
+Generate a helpful, contextual response that:
+1. Acknowledges what the user said
+2. Provides relevant information or asks clarifying questions
+3. Suggests next steps if appropriate
+
+Keep the response conversational and under 200 words.`;
+
+    const completion = await openai.chat.completions.create({
+      model,
+      messages: [
+        {
+          role: 'system',
+          content: 'You are a helpful AI assistant for relationship management. Provide clear, actionable responses.'
+        },
+        {
+          role: 'user',
+          content: prompt
+        }
+      ],
+      max_tokens: 300,
+      temperature: 0.7,
+    });
+
+    return completion.choices[0]?.message?.content || 'I understand. How can I help you further?';
+  }
+
+  /**
+   * Extract contact information from text
+   */
+  async extractContactInfo(text: string): Promise<ContactExtractionResult> {
+    try {
+      const model = modelSelector.getOptimalModel('contact_extraction', 'medium');
+      
+      const completion = await openai.chat.completions.create({
+        model,
+        messages: [
+          {
+            role: 'system',
+            content: 'Extract contact information from the text. Return a JSON object with name, company, title, email, phone, and confidence (0-1).'
+          },
+          {
+            role: 'user',
+            content: text
+          }
+        ],
+        max_tokens: 200,
+        temperature: 0.3,
+      });
+
+      const response = completion.choices[0]?.message?.content || '{}';
+      
+      try {
+        const result = JSON.parse(response);
+        return {
+          name: result.name,
+          company: result.company,
+          title: result.title,
+          email: result.email,
+          phone: result.phone,
+          confidence: result.confidence || 0.5
+        };
+      } catch {
+        return {
+          confidence: 0.3
+        };
+      }
     } catch (error) {
       logger.error('Error extracting contact info:', error);
-      throw error;
+      return {
+        confidence: 0.3
+      };
     }
   }
 
-  async analyzeGoal(goalDescription: string): Promise<any> {
+  /**
+   * Extract goal information from text
+   */
+  async extractGoalInfo(text: string): Promise<GoalExtractionResult> {
     try {
-      let model: string;
-      try {
-        model = modelSelector.getOptimalModel('goal_analysis') || config.openai.model;
-      } catch (error) {
-        logger.warn('Model selector failed, using default model:', error);
-        model = config.openai.model;
-      }
-      const startTime = Date.now();
+      const model = modelSelector.getOptimalModel('goal_extraction', 'medium');
       
-      const response = await openai.chat.completions.create({
-        model: model,
+      const completion = await openai.chat.completions.create({
+        model,
         messages: [
-          { role: 'system', content: SYSTEM_PROMPTS.goalAnalysis },
-          { role: 'user', content: goalDescription }
+          {
+            role: 'system',
+            content: 'Extract goal information from the text. Return a JSON object with description, targetDate, priority (low/medium/high), category, and confidence (0-1).'
+          },
+          {
+            role: 'user',
+            content: text
+          }
         ],
-        temperature: 0.5,
-        response_format: { type: 'json_object' },
-      });
-      
-      try {
-        modelSelector.recordPerformance(model, Date.now() - startTime, true);
-      } catch (error) {
-        logger.warn('Failed to record performance metrics:', error);
-      }
-
-      const content = response.choices[0]?.message?.content;
-      if (!content) throw new Error('No response from GPT-4');
-
-      return JSON.parse(content);
-    } catch (error) {
-      logger.error('Error analyzing goal:', error);
-      throw error;
-    }
-  }
-
-  async scoreRelationship(contactInfo: any, interactions: any[]): Promise<any> {
-    try {
-      const context = `
-Contact: ${contactInfo.name}
-Company: ${contactInfo.company || 'Unknown'}
-Title: ${contactInfo.title || 'Unknown'}
-Last Interaction: ${contactInfo.last_interaction || 'Never'}
-Total Interactions: ${interactions.length}
-Recent Interactions: ${JSON.stringify(interactions.slice(0, 5))}
-      `;
-
-      let model: string;
-      try {
-        model = modelSelector.getOptimalModel('relationship_scoring') || config.openai.model;
-      } catch (error) {
-        logger.warn('Model selector failed, using default model:', error);
-        model = config.openai.model;
-      }
-      const startTime = Date.now();
-
-      const response = await openai.chat.completions.create({
-        model: model,
-        messages: [
-          { role: 'system', content: SYSTEM_PROMPTS.relationshipScoring },
-          { role: 'user', content: context }
-        ],
+        max_tokens: 200,
         temperature: 0.3,
-        response_format: { type: 'json_object' },
       });
+
+      const response = completion.choices[0]?.message?.content || '{}';
       
       try {
-        modelSelector.recordPerformance(model, Date.now() - startTime, true);
-      } catch (error) {
-        logger.warn('Failed to record performance metrics:', error);
+        const result = JSON.parse(response);
+        return {
+          description: result.description || 'General goal',
+          targetDate: result.targetDate,
+          priority: result.priority || 'medium',
+          category: result.category || 'general',
+          confidence: result.confidence || 0.5
+        };
+      } catch {
+        return {
+          description: 'General goal',
+          priority: 'medium',
+          category: 'general',
+          confidence: 0.3
+        };
       }
-
-      const content = response.choices[0]?.message?.content;
-      if (!content) throw new Error('No response from GPT');
-
-      return JSON.parse(content);
     } catch (error) {
-      logger.error('Error scoring relationship:', error);
-      throw error;
+      logger.error('Error extracting goal info:', error);
+      return {
+        description: 'General goal',
+        priority: 'medium',
+        category: 'general',
+        confidence: 0.3
+      };
     }
   }
 
-  async generateIntroduction(fromContact: any, toContact: any, reason: string): Promise<string> {
+  /**
+   * Generate voice response using ElevenLabs
+   */
+  async generateVoiceResponse(prompt: string, context?: any): Promise<string> {
     try {
-      const context = `
-From: ${fromContact.name} (${fromContact.title} at ${fromContact.company})
-To: ${toContact.name} (${toContact.title} at ${toContact.company})
-Reason: ${reason}
-      `;
-
-      let model: string;
-      try {
-        model = modelSelector.getOptimalModel('introduction_generation') || config.openai.model;
-      } catch (error) {
-        logger.warn('Model selector failed, using default model:', error);
-        model = config.openai.model;
-      }
-      const startTime = Date.now();
-
-      const response = await openai.chat.completions.create({
-        model: model,
+      const model = modelSelector.getOptimalModel('voice_response', 'simple');
+      
+      const completion = await openai.chat.completions.create({
+        model,
         messages: [
-          { role: 'system', content: SYSTEM_PROMPTS.introductionSuggestion },
-          { role: 'user', content: context }
+          {
+            role: 'system',
+            content: 'Generate a natural, conversational response suitable for voice synthesis. Keep it under 100 words and make it sound natural when spoken.'
+          },
+          {
+            role: 'user',
+            content: prompt
+          }
         ],
-        temperature: 0.7,
-        max_tokens: 300,
-      });
-      
-      try {
-        modelSelector.recordPerformance(model, Date.now() - startTime, true);
-      } catch (error) {
-        logger.warn('Failed to record performance metrics:', error);
-      }
-
-      return response.choices[0]?.message?.content || '';
-    } catch (error) {
-      logger.error('Error generating introduction:', error);
-      throw error;
-    }
-  }
-
-  async detectIntent(transcript: string): Promise<string> {
-    try {
-      // Use model selector for intent detection
-      let model: string;
-      try {
-        model = modelSelector.getOptimalModel('intent_detection') || config.openai.model;
-      } catch (error) {
-        logger.warn('Model selector failed, using default model:', error);
-        model = config.openai.model;
-      }
-      const startTime = Date.now();
-
-      const response = await openai.chat.completions.create({
-        model: model,
-        messages: [
-          { role: 'system', content: 'You are an intent detection system. Analyze the user input and return the most likely intent as a single word from: ADD_CONTACT, UPDATE_CONTACT, FIND_CONTACT, SET_GOAL, REQUEST_INTRO, SCHEDULE_FOLLOWUP, ANALYZE_RELATIONSHIP, GENERAL_QUERY' },
-          { role: 'user', content: transcript }
-        ],
-        temperature: 0.1,
-        max_tokens: 20,
-      });
-      
-      try {
-        modelSelector.recordPerformance(model, Date.now() - startTime, true);
-      } catch (error) {
-        logger.warn('Failed to record performance metrics:', error);
-      }
-
-      const intent = response.choices[0]?.message?.content?.trim() || 'GENERAL_QUERY';
-      return intent;
-    } catch (error) {
-      logger.error('Error detecting intent with AI, falling back to pattern matching:', error);
-      
-      // Fallback to pattern matching
-      const lowerTranscript = transcript.toLowerCase();
-      
-      for (const [intent, patterns] of Object.entries(INTENT_PATTERNS)) {
-        if (patterns.some(pattern => lowerTranscript.includes(pattern))) {
-          return intent;
-        }
-      }
-      
-      return 'GENERAL_QUERY';
-    }
-  }
-
-  async generateVoiceResponse(context: string, userMessage: string, userId?: string): Promise<string> {
-    try {
-      // Check OpenAI rate limits if userId is provided
-      if (userId) {
-        const openAICheck = rateLimiter.canMakeOpenAIRequest(userId);
-        if (!openAICheck.allowed) {
-          logger.warn(`OpenAI rate limit exceeded for user ${userId}`);
-          return `I'm a bit busy right now. Please wait ${openAICheck.retryAfter} seconds and try again.`;
-        }
-        rateLimiter.recordOpenAIRequest(userId);
-      }
-
-      let model: string;
-      try {
-        model = modelSelector.getOptimalModel('basic_response') || config.openai.model;
-      } catch (error) {
-        logger.warn('Model selector failed, using default model:', error);
-        model = config.openai.model;
-      }
-      const startTime = Date.now();
-
-      const response = await openai.chat.completions.create({
-        model: model,
-        messages: [
-          { role: 'system', content: SYSTEM_PROMPTS.voicePersonality },
-          { role: 'user', content: `Context: ${context}\n\nUser said: ${userMessage}` }
-        ],
-        temperature: 0.7,
         max_tokens: 150,
+        temperature: 0.7,
       });
-      
-      try {
-        modelSelector.recordPerformance(model, Date.now() - startTime, true);
-      } catch (error) {
-        logger.warn('Failed to record performance metrics:', error);
-      }
 
-      return response.choices[0]?.message?.content || 'I understand. How else can I help you?';
+      return completion.choices[0]?.message?.content || 'I understand. How can I help you?';
     } catch (error) {
       logger.error('Error generating voice response:', error);
-      return 'I had trouble processing that. Could you try again?';
+      return 'I understand. How can I help you?';
     }
   }
 
-  async createEmbedding(text: string): Promise<number[]> {
-    try {
-      const response = await openai.embeddings.create({
-        model: 'text-embedding-3-small',
-        input: text,
-      });
+  /**
+   * Get suggested actions based on intent
+   */
+  private getSuggestedActions(intent: string): string[] {
+    const actionMap: Record<string, string[]> = {
+      'add_contact': ['Save contact', 'Add more details', 'Set reminder'],
+      'find_contact': ['Search contacts', 'Filter by company', 'Recent contacts'],
+      'set_goal': ['Create goal', 'Set timeline', 'Add milestones'],
+      'general_conversation': ['Ask questions', 'Get help', 'Learn more']
+    };
 
-      return response.data[0].embedding;
-    } catch (error) {
-      logger.error('Error creating embedding:', error);
-      throw error;
-    }
-  }
-
-  async findSimilarContacts(
-    embedding: number[],
-    allContacts: any[],
-    threshold: number = 0.7
-  ): Promise<any[]> {
-    // Batch process contacts for better performance
-    const batchSize = 10;
-    const similarities: Array<{ contact: any; similarity: number }> = [];
-    
-    for (let i = 0; i < allContacts.length; i += batchSize) {
-      const batch = allContacts.slice(i, i + batchSize);
-      
-      const batchSimilarities = await Promise.all(
-        batch.map(async (contact) => {
-          const contactText = `${contact.name} ${contact.company} ${contact.title} ${contact.notes}`;
-          const contactEmbedding = await this.getCachedEmbedding(contactText);
-          
-          const similarity = this.cosineSimilarity(embedding, contactEmbedding);
-          return { contact, similarity };
-        })
-      );
-      
-      similarities.push(...batchSimilarities);
-    }
-
-    return similarities
-      .filter(s => s.similarity >= threshold)
-      .sort((a, b) => b.similarity - a.similarity)
-      .map(s => s.contact);
-  }
-
-  private cosineSimilarity(a: number[], b: number[]): number {
-    let dotProduct = 0;
-    let normA = 0;
-    let normB = 0;
-    
-    for (let i = 0; i < a.length; i++) {
-      dotProduct += a[i] * b[i];
-      normA += a[i] * a[i];
-      normB += b[i] * b[i];
-    }
-    
-    return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
-  }
-
-  // Additional methods for relationship and introduction services
-  async suggestIntroductions(goals: any[], contacts: any[]): Promise<any[]> {
-    try {
-      // Simple implementation - in production, this would use AI to suggest introductions
-      const suggestions = [];
-      if (contacts.length >= 2) {
-        suggestions.push({
-          from_contact: contacts[0],
-          to_contact: contacts[1],
-          reason: 'Potential collaboration based on goals'
-        });
-      }
-      return suggestions;
-    } catch (error) {
-      logger.error('Error suggesting introductions:', error);
-      return [];
-    }
-  }
-
-  async suggestIntroductionsByInterests(contacts: any[]): Promise<any[]> {
-    try {
-      // Simple implementation - in production, this would analyze interests
-      const suggestions = [];
-      if (contacts.length >= 2) {
-        suggestions.push({
-          from_contact: contacts[0],
-          to_contact: contacts[1],
-          reason: 'Shared interests',
-          confidence: 0.8,
-          mutual_interests: ['Technology']
-        });
-      }
-      return suggestions;
-    } catch (error) {
-      logger.error('Error suggesting introductions by interests:', error);
-      return [];
-    }
-  }
-
-  async suggestIntroductionFollowUps(introduction: any, fromContact: any, toContact: any): Promise<string[]> {
-    try {
-      return [
-        'Schedule a meeting between the contacts',
-        'Send calendar invite',
-        'Follow up in a week'
-      ];
-    } catch (error) {
-      logger.error('Error suggesting introduction follow-ups:', error);
-      return [];
-    }
-  }
-
-  async generateGoalInsights(goal: any, contacts: any[]): Promise<any[]> {
-    try {
-      return [
-        {
-          type: 'opportunity',
-          title: 'Goal Progress Opportunity',
-          description: 'You have contacts that could help with this goal',
-          confidence: 0.8,
-          actionable: true,
-          next_action: 'Reach out to relevant contacts'
-        }
-      ];
-    } catch (error) {
-      logger.error('Error generating goal insights:', error);
-      return [];
-    }
-  }
-
-  async generateContactInsights(contact: any, interactions: any[], goals: any[]): Promise<any[]> {
-    try {
-      return [
-        {
-          type: 'strength',
-          title: 'Strong Relationship',
-          description: 'This contact has been engaged regularly',
-          confidence: 0.7,
-          actionable: true,
-          next_action: 'Consider for introductions'
-        }
-      ];
-    } catch (error) {
-      logger.error('Error generating contact insights:', error);
-      return [];
-    }
-  }
-
-  async suggestFollowUps(contact: any, interactions: any[]): Promise<string[]> {
-    try {
-      return [
-        'Schedule follow-up meeting',
-        'Send thank you email',
-        'Connect on LinkedIn'
-      ];
-    } catch (error) {
-      logger.error('Error suggesting follow-ups:', error);
-      return [];
-    }
-  }
-
-  // New conversational AI methods
-  async analyzeConversation(
-    transcript: string,
-    context: any
-  ): Promise<{ mood: 'casual' | 'professional' | 'urgent'; topic: string }> {
-    try {
-      const response = await openai.chat.completions.create({
-        model: config.openai.model,
-        messages: [
-          {
-            role: 'system',
-            content: `Analyze the conversation mood and topic. 
-            Mood options: casual (friendly, relaxed), professional (formal, business-like), urgent (time-sensitive, important)
-            Topic: What is the main subject being discussed? (contact, goal, introduction, general, etc.)
-            
-            Respond in JSON format:
-            {
-              "mood": "casual|professional|urgent",
-              "topic": "topic_name",
-              "confidence": 0.95
-            }`
-          },
-          {
-            role: 'user',
-            content: `Transcript: "${transcript}"
-            Recent context: ${context.conversationHistory?.slice(-3).map((msg: { role: string; content: string }) => `${msg.role}: ${msg.content}`).join(' | ') || 'None'}`
-          }
-        ],
-        temperature: 0.3,
-        max_tokens: 100,
-      });
-
-      const result = JSON.parse(response.choices[0]?.message?.content || '{"mood": "casual", "topic": "general"}');
-      return {
-        mood: result.mood || 'casual',
-        topic: result.topic || 'general'
-      };
-    } catch (error) {
-      logger.error('Error analyzing conversation:', error);
-      return { mood: 'casual', topic: 'general' };
-    }
-  }
-
-  async generateConversationalResponse(
-    transcript: string,
-    context: {
-      mood: string;
-      topic: string;
-      recentHistory: string;
-      activeContacts: string[];
-      currentGoal?: string;
-    }
-  ): Promise<{ text: string; actions: string[] }> {
-    try {
-      const response = await openai.chat.completions.create({
-        model: config.openai.model,
-        messages: [
-          {
-            role: 'system',
-            content: `You are Rhiz, a warm and professional AI relationship manager having a natural conversation.
-            
-            Your personality:
-            - Friendly and approachable, but professional
-            - Concise responses (2-3 sentences max)
-            - Proactive with suggestions
-            - Natural conversational style
-            - Focus on relationship building and networking
-            
-            Current mood: ${context.mood}
-            Current topic: ${context.topic}
-            Active contacts: ${context.activeContacts.join(', ') || 'None'}
-            Current goal: ${context.currentGoal || 'None'}
-            
-            Recent conversation:
-            ${context.recentHistory}
-            
-            Respond naturally as if in a phone conversation. Be conversational, not robotic.
-            Also suggest 1-3 relevant actions the user might want to take.`
-          },
-          {
-            role: 'user',
-            content: transcript
-          }
-        ],
-        temperature: 0.7,
-        max_tokens: 200,
-      });
-
-      const content = response.choices[0]?.message?.content || 'I understand. How else can I help you?';
-      
-      // Extract actions from response (they might be mentioned in the text)
-      const actions = this.extractActionsFromResponse(content, context.topic);
-
-      return {
-        text: content,
-        actions
-      };
-    } catch (error) {
-      logger.error('Error generating conversational response:', error);
-      return {
-        text: 'I understand. How else can I help you?',
-        actions: []
-      };
-    }
-  }
-
-  private extractActionsFromResponse(response: string, topic: string): string[] {
-    const actions = [];
-    
-    // Extract actions based on topic and response content
-    if (topic === 'contact' || response.toLowerCase().includes('contact')) {
-      if (response.toLowerCase().includes('save') || response.toLowerCase().includes('add')) {
-        actions.push('📝 Save contact details');
-      }
-      if (response.toLowerCase().includes('remind') || response.toLowerCase().includes('follow')) {
-        actions.push('⏰ Set follow-up reminder');
-      }
-      if (response.toLowerCase().includes('introduce') || response.toLowerCase().includes('connect')) {
-        actions.push('💡 Get introduction suggestions');
-      }
-    }
-    
-    if (topic === 'goal' || response.toLowerCase().includes('goal')) {
-      actions.push('🎯 Track goal progress');
-      actions.push('👥 Find relevant contacts');
-    }
-
-    // Default actions if none found
-    if (actions.length === 0) {
-      actions.push('📝 Add new contact');
-      actions.push('🔍 Search contacts');
-    }
-
-    return actions;
-  }
-
-  async generateConversationSummary(
-    conversationHistory: Array<{ role: string; content: string; timestamp: Date }>
-  ): Promise<string> {
-    try {
-      const conversationText = conversationHistory
-        .map((msg: { role: string; content: string; timestamp: Date }) => `${msg.role}: ${msg.content}`)
-        .join('\n');
-
-      const response = await openai.chat.completions.create({
-        model: config.openai.model,
-        messages: [
-          {
-            role: 'system',
-            content: `Summarize this conversation in 2-3 sentences, focusing on:
-            - Main topics discussed
-            - Key contacts mentioned
-            - Actions taken or planned
-            - Overall outcome
-            
-            Be concise but informative.`
-          },
-          {
-            role: 'user',
-            content: conversationText
-          }
-        ],
-        temperature: 0.5,
-        max_tokens: 150,
-      });
-
-      return response.choices[0]?.message?.content || 'Conversation summary unavailable.';
-    } catch (error) {
-      logger.error('Error generating conversation summary:', error);
-      return 'Conversation summary unavailable.';
-    }
+    return actionMap[intent] || ['Continue conversation', 'Ask for help'];
   }
 }
 

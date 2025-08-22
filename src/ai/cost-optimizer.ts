@@ -1,264 +1,255 @@
+import { modelSelector } from './model-registry';
+import config from '../utils/config';
 import logger from '../utils/logger';
-import { modelSelector, getModelForTask } from './model-registry';
 
-export interface CostMetrics {
-  tokenUsage: {
-    input: number;
-    output: number;
-    total: number;
-  };
-  apiCalls: {
-    count: number;
-    cost: number;
-  };
-  embeddings: {
-    count: number;
-    cost: number;
-  };
-  voice: {
-    transcription_minutes: number;
-    synthesis_characters: number;
-    cost: number;
-  };
+interface CostMetrics {
+  tokensUsed: number;
+  costPerToken: number;
+  totalCost: number;
+  modelUsed: string;
+  timestamp: Date;
 }
 
-export class CostOptimizer {
-  private cache = new Map<string, { data: any; timestamp: number; cost: number }>();
-  private readonly CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
-  private readonly MAX_CACHE_SIZE = 1000;
-  
-  private metrics: CostMetrics = {
-    tokenUsage: { input: 0, output: 0, total: 0 },
-    apiCalls: { count: 0, cost: 0 },
-    embeddings: { count: 0, cost: 0 },
-    voice: { transcription_minutes: 0, synthesis_characters: 0, cost: 0 }
-  };
+interface OptimizationResult {
+  optimized: boolean;
+  costSavings: number;
+  modelChanged: boolean;
+  newModel: string;
+  reason: string;
+}
 
-  // Token counting for cost estimation
-  estimateTokens(text: string): number {
-    // Rough estimation: ~4 characters per token for English
-    return Math.ceil(text.length / 4);
+class CostOptimizer {
+  private costHistory: CostMetrics[] = [];
+  private dailyBudget: number = 10.0; // $10 daily budget
+  private monthlyBudget: number = 100.0; // $100 monthly budget
+
+  /**
+   * Optimize model selection based on cost and performance
+   */
+  async optimizeModelSelection(task: string, complexity: 'simple' | 'medium' | 'complex'): Promise<OptimizationResult> {
+    try {
+      const currentModel = config.openai.model;
+      const optimalModel = modelSelector.getOptimalModel(task, complexity);
+      
+      // Check if we should switch to a cheaper model
+      if (this.shouldUseCheaperModel(task, complexity)) {
+        const cheaperModel = this.getCheaperModel(currentModel);
+        
+        if (cheaperModel && cheaperModel !== currentModel) {
+          return {
+            optimized: true,
+            costSavings: this.calculateCostSavings(currentModel, cheaperModel),
+            modelChanged: true,
+            newModel: cheaperModel,
+            reason: 'Cost optimization: switching to cheaper model'
+          };
+        }
+      }
+
+      // Check if we should use the optimal model
+      if (optimalModel !== currentModel) {
+        return {
+          optimized: true,
+          costSavings: this.calculateCostSavings(currentModel, optimalModel),
+          modelChanged: true,
+          newModel: optimalModel,
+          reason: 'Performance optimization: using optimal model for task'
+        };
+      }
+
+      return {
+        optimized: false,
+        costSavings: 0,
+        modelChanged: false,
+        newModel: currentModel,
+        reason: 'No optimization needed'
+      };
+    } catch (error) {
+      logger.error('Error in model optimization:', error);
+      return {
+        optimized: false,
+        costSavings: 0,
+        modelChanged: false,
+        newModel: config.openai.model,
+        reason: 'Optimization failed, using default model'
+      };
+    }
   }
 
-  // Smart caching with cost awareness
-  async getCachedOrExecute<T>(
-    key: string,
-    operation: () => Promise<T>,
-    estimatedCost: number,
-    ttl: number = this.CACHE_TTL
-  ): Promise<T> {
-    const cacheKey = this.hashKey(key);
-    const cached = this.cache.get(cacheKey);
-    
-    if (cached && (Date.now() - cached.timestamp) < ttl) {
-      logger.info(`Cache hit for ${key}, saved $${estimatedCost.toFixed(4)}`);
-      return cached.data;
-    }
-    
-    // Execute operation and cache result
-    const result = await operation();
-    
-    // Manage cache size
-    if (this.cache.size >= this.MAX_CACHE_SIZE) {
-      this.evictOldestEntries();
-    }
-    
-    this.cache.set(cacheKey, {
-      data: result,
-      timestamp: Date.now(),
-      cost: estimatedCost
+  /**
+   * Record cost metrics for analysis
+   */
+  recordCostMetrics(metrics: Omit<CostMetrics, 'timestamp'>): void {
+    this.costHistory.push({
+      ...metrics,
+      timestamp: new Date()
     });
-    
-    // Track cost metrics
-    this.metrics.apiCalls.count++;
-    this.metrics.apiCalls.cost += estimatedCost;
-    
-    return result;
+
+    // Keep only last 1000 entries
+    if (this.costHistory.length > 1000) {
+      this.costHistory = this.costHistory.slice(-1000);
+    }
   }
 
-  // Optimize prompt length while preserving meaning
-  optimizePrompt(prompt: string, maxTokens: number): string {
-    const estimatedTokens = this.estimateTokens(prompt);
-    
-    if (estimatedTokens <= maxTokens) {
-      return prompt;
-    }
-    
-    // Progressive optimization strategies
-    let optimized = prompt;
-    
-    // 1. Remove redundant whitespace
-    optimized = optimized.replace(/\s+/g, ' ').trim();
-    
-    // 2. Compress common phrases
-    const compressions = {
-      'Please provide': 'Provide',
-      'I would like you to': 'Please',
-      'It would be great if you could': 'Please',
-      'Could you please': 'Please',
-      'I need you to': 'Please'
-    };
-    
-    for (const [long, short] of Object.entries(compressions)) {
-      optimized = optimized.replace(new RegExp(long, 'gi'), short);
-    }
-    
-    // 3. If still too long, truncate intelligently
-    if (this.estimateTokens(optimized) > maxTokens) {
-      const targetLength = Math.floor(optimized.length * (maxTokens / estimatedTokens));
-      optimized = optimized.substring(0, targetLength) + '...';
-    }
-    
-    logger.info(`Prompt optimized from ${estimatedTokens} to ${this.estimateTokens(optimized)} tokens`);
-    return optimized;
-  }
-
-  // Batch operations to reduce API calls
-  async batchEmbeddings(texts: string[], batchSize: number = 10): Promise<number[][]> {
-    const batches = [];
-    for (let i = 0; i < texts.length; i += batchSize) {
-      batches.push(texts.slice(i, i + batchSize));
-    }
-    
-    const results: number[][] = [];
-    
-    for (const batch of batches) {
-      // This would integrate with your embedding service
-      logger.info(`Processing embedding batch of ${batch.length} items`);
-      
-      // Simulate batch processing
-      const batchResults = await Promise.all(
-        batch.map(text => this.simulateEmbedding(text))
-      );
-      
-      results.push(...batchResults);
-      
-      // Track metrics
-      this.metrics.embeddings.count += batch.length;
-      this.metrics.embeddings.cost += batch.length * 0.0001; // Estimated cost per embedding
-    }
-    
-    return results;
-  }
-
-  // Use cheaper models for simple tasks
-  getOptimalModel(task: string, complexity: 'low' | 'medium' | 'high'): string {
-    // Now delegates to the new model registry for intelligent selection
-    return getModelForTask(task, complexity);
-  }
-
-  // Monitor and alert on cost thresholds
-  checkCostThresholds(): {
-    alerts: string[];
-    recommendations: string[];
-    currentCost: number;
+  /**
+   * Get cost analysis for the current period
+   */
+  getCostAnalysis(): {
+    dailyCost: number;
+    monthlyCost: number;
+    averageCostPerRequest: number;
+    totalRequests: number;
+    budgetUtilization: number;
   } {
-    const totalCost = this.metrics.apiCalls.cost + 
-                     this.metrics.embeddings.cost + 
-                     this.metrics.voice.cost;
-    
-    const alerts: string[] = [];
-    const recommendations: string[] = [];
-    
-    // Daily cost threshold ($10)
-    if (totalCost > 10) {
-      alerts.push(`Daily cost threshold exceeded: $${totalCost.toFixed(2)}`);
-    }
-    
-    // High token usage patterns
-    if (this.metrics.tokenUsage.total > 100000) {
-      recommendations.push('Consider implementing more aggressive prompt optimization');
-    }
-    
-    // Cache hit rate analysis
-    const cacheHitRate = this.calculateCacheHitRate();
-    if (cacheHitRate < 0.3) {
-      recommendations.push('Low cache hit rate detected - review caching strategy');
-    }
-    
-    // Embedding optimization
-    if (this.metrics.embeddings.count > 1000) {
-      recommendations.push('High embedding usage - consider batch processing and caching');
-    }
-    
+    const now = new Date();
+    const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    const oneMonthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+    const dailyCosts = this.costHistory.filter(m => m.timestamp > oneDayAgo);
+    const monthlyCosts = this.costHistory.filter(m => m.timestamp > oneMonthAgo);
+
+    const dailyCost = dailyCosts.reduce((sum, m) => sum + m.totalCost, 0);
+    const monthlyCost = monthlyCosts.reduce((sum, m) => sum + m.totalCost, 0);
+    const totalRequests = this.costHistory.length;
+    const averageCostPerRequest = totalRequests > 0 ? 
+      this.costHistory.reduce((sum, m) => sum + m.totalCost, 0) / totalRequests : 0;
+
     return {
-      alerts,
-      recommendations,
-      currentCost: totalCost
+      dailyCost,
+      monthlyCost,
+      averageCostPerRequest,
+      totalRequests,
+      budgetUtilization: (dailyCost / this.dailyBudget) * 100
     };
   }
 
-  // Cost reporting and analytics
-  generateCostReport(): {
-    daily_cost: number;
-    cost_breakdown: CostMetrics;
-    optimization_savings: number;
-    recommendations: string[];
-  } {
-    const totalCost = this.metrics.apiCalls.cost + 
-                     this.metrics.embeddings.cost + 
-                     this.metrics.voice.cost;
-    
-    const cacheHitRate = this.calculateCacheHitRate();
-    const cacheSavings = Array.from(this.cache.values())
-      .reduce((total, entry) => total + entry.cost, 0);
-    
-    return {
-      daily_cost: totalCost,
-      cost_breakdown: { ...this.metrics },
-      optimization_savings: cacheSavings,
-      recommendations: [
-        `Current cache hit rate: ${(cacheHitRate * 100).toFixed(1)}%`,
-        `Total savings from caching: $${cacheSavings.toFixed(4)}`,
-        'Consider using smaller models for simple tasks',
-        'Implement batch processing for embeddings',
-        'Monitor token usage patterns'
-      ]
-    };
+  /**
+   * Check if we're approaching budget limits
+   */
+  isBudgetWarning(): boolean {
+    const analysis = this.getCostAnalysis();
+    return analysis.budgetUtilization > 80; // Warning at 80% of daily budget
   }
 
-  // Reset daily metrics
-  resetDailyMetrics(): void {
-    this.metrics = {
-      tokenUsage: { input: 0, output: 0, total: 0 },
-      apiCalls: { count: 0, cost: 0 },
-      embeddings: { count: 0, cost: 0 },
-      voice: { transcription_minutes: 0, synthesis_characters: 0, cost: 0 }
-    };
+  /**
+   * Check if we should use a cheaper model
+   */
+  private shouldUseCheaperModel(task: string, complexity: string): boolean {
+    const analysis = this.getCostAnalysis();
     
-    logger.info('Daily cost metrics reset');
+    // Use cheaper model if:
+    // 1. We're over 70% of daily budget
+    // 2. Task is simple or medium complexity
+    // 3. Not a critical task
+    return analysis.budgetUtilization > 70 && 
+           (complexity === 'simple' || complexity === 'medium') &&
+           !this.isCriticalTask(task);
   }
 
-  private hashKey(key: string): string {
-    // Simple hash function for cache keys
-    let hash = 0;
-    for (let i = 0; i < key.length; i++) {
-      const char = key.charCodeAt(i);
-      hash = ((hash << 5) - hash) + char;
-      hash = hash & hash; // Convert to 32bit integer
+  /**
+   * Get a cheaper alternative model
+   */
+  private getCheaperModel(currentModel: string): string | null {
+    const modelCosts: Record<string, number> = {
+      'gpt-4': 0.03,
+      'gpt-4-turbo': 0.01,
+      'gpt-3.5-turbo': 0.002,
+      'gpt-3.5-turbo-16k': 0.003
+    };
+
+    const currentCost = modelCosts[currentModel] || 0.01;
+    
+    // Find cheaper model
+    for (const [model, cost] of Object.entries(modelCosts)) {
+      if (cost < currentCost && model !== currentModel) {
+        return model;
+      }
     }
-    return hash.toString();
+
+    return null;
   }
 
-  private evictOldestEntries(): void {
-    const entries = Array.from(this.cache.entries());
-    entries.sort((a, b) => a[1].timestamp - b[1].timestamp);
+  /**
+   * Calculate cost savings between models
+   */
+  private calculateCostSavings(currentModel: string, newModel: string): number {
+    const modelCosts: Record<string, number> = {
+      'gpt-4': 0.03,
+      'gpt-4-turbo': 0.01,
+      'gpt-3.5-turbo': 0.002,
+      'gpt-3.5-turbo-16k': 0.003
+    };
+
+    const currentCost = modelCosts[currentModel] || 0.01;
+    const newCost = modelCosts[newModel] || 0.01;
     
-    // Remove oldest 20% of entries
-    const toRemove = Math.floor(entries.length * 0.2);
-    for (let i = 0; i < toRemove; i++) {
-      this.cache.delete(entries[i][0]);
+    return currentCost - newCost;
+  }
+
+  /**
+   * Check if task is critical (shouldn't be optimized for cost)
+   */
+  private isCriticalTask(task: string): boolean {
+    const criticalTasks = [
+      'security',
+      'authentication',
+      'payment',
+      'user_data',
+      'admin',
+      'emergency'
+    ];
+
+    return criticalTasks.some(critical => 
+      task.toLowerCase().includes(critical)
+    );
+  }
+
+  /**
+   * Generate cost optimization report
+   */
+  generateOptimizationReport(): string {
+    const analysis = this.getCostAnalysis();
+    const optimization = this.getOptimizationSuggestions();
+
+    return `
+📊 **Cost Optimization Report**
+
+💰 **Current Costs:**
+• Daily: $${analysis.dailyCost.toFixed(4)}
+• Monthly: $${analysis.monthlyCost.toFixed(4)}
+• Per Request: $${analysis.averageCostPerRequest.toFixed(6)}
+• Total Requests: ${analysis.totalRequests}
+
+🎯 **Budget Status:**
+• Daily Budget: $${this.dailyBudget}
+• Utilization: ${analysis.budgetUtilization.toFixed(1)}%
+• Status: ${analysis.budgetUtilization > 80 ? '⚠️ Warning' : '✅ Good'}
+
+💡 **Optimization Suggestions:**
+${optimization.map(s => `• ${s}`).join('\n')}
+    `.trim();
+  }
+
+  /**
+   * Get optimization suggestions
+   */
+  private getOptimizationSuggestions(): string[] {
+    const analysis = this.getCostAnalysis();
+    const suggestions: string[] = [];
+
+    if (analysis.budgetUtilization > 80) {
+      suggestions.push('Consider switching to GPT-3.5-turbo for simple tasks');
     }
-  }
 
-  private calculateCacheHitRate(): number {
-    // This would need to be implemented with actual cache hit tracking
-    return 0.65; // Placeholder
-  }
+    if (analysis.averageCostPerRequest > 0.01) {
+      suggestions.push('Review high-cost requests and optimize prompts');
+    }
 
-  private async simulateEmbedding(text: string): Promise<number[]> {
-    // Placeholder for actual embedding generation
-    return new Array(1536).fill(0).map(() => Math.random());
+    if (analysis.totalRequests > 1000) {
+      suggestions.push('Implement request caching to reduce API calls');
+    }
+
+    return suggestions;
   }
 }
 
