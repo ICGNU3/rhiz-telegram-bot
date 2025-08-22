@@ -186,15 +186,15 @@ class EnhancedFeatures {
    */
   async optimizeGoals(
     currentGoals: Array<Record<string, any>>,
-    userBehavior: Record<string, any>
+    _userBehavior: Record<string, any>
   ): Promise<Array<Record<string, any>>> {
     try {
       const optimizedGoals = currentGoals.map(goal => {
         // Adjust priority based on user behavior
-        const newPriority = this.calculateGoalPriority(goal, userBehavior);
+        const newPriority = this.calculateGoalPriority(goal, _userBehavior);
         
         // Suggest timeline adjustments
-        const suggestedTimeline = this.suggestTimelineAdjustment(goal, userBehavior);
+        const suggestedTimeline = this.suggestTimelineAdjustment(goal, _userBehavior);
         
         return {
           ...goal,
@@ -316,7 +316,7 @@ class EnhancedFeatures {
   /**
    * Calculate goal priority based on user behavior
    */
-  private calculateGoalPriority(goal: Record<string, any>, userBehavior: Record<string, any>): 'low' | 'medium' | 'high' {
+  private calculateGoalPriority(goal: Record<string, any>, _userBehavior: Record<string, any>): 'low' | 'medium' | 'high' {
     // Simple priority calculation
     const progress = goal.progress || 0;
     const deadline = goal.deadline ? new Date(goal.deadline) : null;
@@ -330,7 +330,7 @@ class EnhancedFeatures {
   /**
    * Suggest timeline adjustment for goals
    */
-  private suggestTimelineAdjustment(goal: Record<string, any>, userBehavior: Record<string, any>): string {
+  private suggestTimelineAdjustment(goal: Record<string, any>, _userBehavior: Record<string, any>): string {
     const progress = goal.progress || 0;
     const deadline = goal.deadline ? new Date(goal.deadline) : null;
     const daysUntilDeadline = deadline ? (deadline.getTime() - new Date().getTime()) / (24 * 60 * 60 * 1000) : 30;

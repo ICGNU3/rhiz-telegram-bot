@@ -99,8 +99,8 @@ export class ModelSelector {
    * Compare two models for a specific task
    */
   compareModels(_nameA: string, _nameB: string, task: string): {
-    modelA: ModelPerformance;
-    modelB: ModelPerformance;
+    modelA: any;
+    modelB: any;
     recommendation: string;
   } {
     const modelA = this.getModelPerformance(_nameA, task);

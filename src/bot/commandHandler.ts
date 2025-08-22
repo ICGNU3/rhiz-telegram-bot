@@ -13,7 +13,7 @@ export class CommandHandler {
   private userMessageCount: Map<number, number> = new Map();
 
   async handleCommand(command: string, context: CommandContext): Promise<string> {
-    const { chatId, userId, username } = context;
+    const { userId, username } = context;
     
     if (userId) {
       const count = this.userMessageCount.get(userId) || 0;

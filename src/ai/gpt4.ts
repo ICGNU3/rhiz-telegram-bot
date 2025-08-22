@@ -225,7 +225,7 @@ class GPT4Service {
   private async generateContextualResponse(
     transcript: string, 
     intentResult: { intent: string; confidence: number; entities: Record<string, any> },
-    context?: any
+    _context?: any
   ): Promise<string> {
     const model = modelSelector.getOptimalModel('response_generation', 'medium');
     
@@ -363,7 +363,7 @@ Keep the response conversational and under 200 words.`;
   /**
    * Generate voice response using ElevenLabs
    */
-  async generateVoiceResponse(prompt: string, context?: any): Promise<string> {
+  async generateVoiceResponse(prompt: string, _context?: any): Promise<string> {
     try {
       const model = modelSelector.getOptimalModel('voice_response', 'simple');
       
