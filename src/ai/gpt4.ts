@@ -753,6 +753,53 @@ Reason: ${reason}
       return 'Conversation summary unavailable.';
     }
   }
+
+  /**
+   * Extract search terms from text for contact search
+   */
+  async extractSearchTerms(text: string): Promise<string[]> {
+    try {
+      const model = modelSelector.getOptimalModel('search_extraction', 'simple');
+      
+      const completion = await openai.chat.completions.create({
+        model,
+        messages: [
+          {
+            role: 'system',
+            content: 'Extract key search terms from the text. Return a JSON array of relevant terms for searching contacts. Focus on names, companies, roles, industries, and keywords.'
+          },
+          {
+            role: 'user',
+            content: text
+          }
+        ],
+        max_tokens: 100,
+        temperature: 0.3,
+      });
+
+      const response = completion.choices[0]?.message?.content || '[]';
+      
+      try {
+        const terms = JSON.parse(response);
+        return Array.isArray(terms) ? terms : [text.trim()];
+      } catch {
+        // Fallback: extract basic terms
+        return text.toLowerCase()
+          .replace(/who is|tell me about|find|search for|do i know|at|in|from/g, '')
+          .trim()
+          .split(/\s+/)
+          .filter(term => term.length > 2);
+      }
+    } catch (error) {
+      logger.error('Error extracting search terms:', error);
+      // Fallback to basic text processing
+      return text.toLowerCase()
+        .replace(/who is|tell me about|find|search for|do i know|at|in|from/g, '')
+        .trim()
+        .split(/\s+/)
+        .filter(term => term.length > 2);
+    }
+  }
 }
 
 export default new GPT4Service();

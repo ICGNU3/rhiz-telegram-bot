@@ -175,15 +175,126 @@ class ContactService {
 
   async searchFromTranscript(userId: string, transcript: string): Promise<any[]> {
     try {
-      // Extract search query from transcript
-      const searchTerms = transcript
-        .toLowerCase()
-        .replace(/who is|tell me about|find|search for|do i know/g, '')
-        .trim();
-
-      return await db.contacts.search(userId, searchTerms);
+      // Extract search terms from transcript
+      const searchTerms = await gpt4Service.extractSearchTerms(transcript);
+      
+      // Search contacts based on extracted terms
+      const contacts = await db.contacts.findByUserId(userId);
+      
+      return contacts.filter((contact: any) => {
+        const searchText = `${contact.name} ${contact.company} ${contact.title} ${contact.notes}`.toLowerCase();
+        return searchTerms.some((term: string) => searchText.includes(term.toLowerCase()));
+      });
     } catch (error) {
-      logger.error('Error searching contacts:', error);
+      logger.error('Error searching contacts from transcript:', error);
+      return [];
+    }
+  }
+
+  async findByCompany(userId: string, company: string): Promise<any[]> {
+    try {
+      const contacts = await db.contacts.findByUserId(userId);
+      return contacts.filter((contact: any) => 
+        contact.company && contact.company.toLowerCase().includes(company.toLowerCase())
+      );
+    } catch (error) {
+      logger.error('Error finding contacts by company:', error);
+      return [];
+    }
+  }
+
+  async findByRole(userId: string, role: string): Promise<any[]> {
+    try {
+      const contacts = await db.contacts.findByUserId(userId);
+      return contacts.filter((contact: any) => 
+        contact.title && contact.title.toLowerCase().includes(role.toLowerCase())
+      );
+    } catch (error) {
+      logger.error('Error finding contacts by role:', error);
+      return [];
+    }
+  }
+
+  async findByType(userId: string, type: string): Promise<any[]> {
+    try {
+      const contacts = await db.contacts.findByUserId(userId);
+      
+      // Map type keywords to contact attributes
+      const typeMappings: { [key: string]: string[] } = {
+        'investor': ['investor', 'vc', 'angel', 'fund'],
+        'founder': ['founder', 'ceo', 'co-founder', 'startup'],
+        'technical': ['engineer', 'developer', 'cto', 'technical'],
+        'marketing': ['marketing', 'growth', 'brand'],
+        'sales': ['sales', 'business development', 'bd'],
+        'design': ['design', 'ux', 'ui', 'creative']
+      };
+      
+      const searchTerms = typeMappings[type.toLowerCase()] || [type];
+      
+      return contacts.filter((contact: any) => {
+        const contactText = `${contact.title} ${contact.company} ${contact.notes}`.toLowerCase();
+        return searchTerms.some(term => contactText.includes(term));
+      });
+    } catch (error) {
+      logger.error('Error finding contacts by type:', error);
+      return [];
+    }
+  }
+
+  async findNeedingFollowUp(userId: string): Promise<any[]> {
+    try {
+      const contacts = await db.contacts.findByUserId(userId);
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      
+      return contacts.filter((contact: any) => {
+        if (!contact.last_interaction_date) return true;
+        return new Date(contact.last_interaction_date) < thirtyDaysAgo;
+      }).slice(0, 10); // Limit to top 10
+    } catch (error) {
+      logger.error('Error finding contacts needing follow-up:', error);
+      return [];
+    }
+  }
+
+  async findStrongestConnections(userId: string): Promise<any[]> {
+    try {
+      const contacts = await db.contacts.findByUserId(userId);
+      return contacts
+        .filter((contact: any) => contact.relationship_strength)
+        .sort((a: any, b: any) => (b.relationship_strength || 0) - (a.relationship_strength || 0))
+        .slice(0, 10);
+    } catch (error) {
+      logger.error('Error finding strongest connections:', error);
+      return [];
+    }
+  }
+
+  async findRecentContacts(userId: string): Promise<any[]> {
+    try {
+      const contacts = await db.contacts.findByUserId(userId);
+      return contacts
+        .sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+        .slice(0, 10);
+    } catch (error) {
+      logger.error('Error finding recent contacts:', error);
+      return [];
+    }
+  }
+
+  async findByExpertise(userId: string, topic: string): Promise<any[]> {
+    try {
+      const contacts = await db.contacts.findByUserId(userId);
+      
+      // Simple keyword matching for expertise
+      const expertiseKeywords = topic.toLowerCase().split(' ');
+      
+      return contacts.filter((contact: any) => {
+        const contactText = `${contact.title} ${contact.company} ${contact.notes}`.toLowerCase();
+        return expertiseKeywords.some(keyword => contactText.includes(keyword));
+      });
+    } catch (error) {
+      logger.error('Error finding contacts by expertise:', error);
       return [];
     }
   }
@@ -191,17 +302,73 @@ class ContactService {
   async updateRelationshipScore(contactId: string): Promise<void> {
     try {
       const contact = await db.contacts.findById(contactId);
-      const interactions = await db.interactions.findByContact(contactId);
-      
-      const scoreData = await gpt4Service.scoreRelationship(contact, interactions);
+      if (!contact) return;
+
+      // Calculate relationship score based on various factors
+      const score = await this.calculateRelationshipScore(contact);
       
       await db.contacts.update(contactId, {
-        relationship_score: scoreData.score,
-        trust_level: scoreData.trust_level,
+        relationship_strength: score,
+        updated_at: new Date()
       });
+
+      logger.info(`Updated relationship score for ${contact.name}: ${score}/100`);
     } catch (error) {
       logger.error('Error updating relationship score:', error);
     }
+  }
+
+  private async calculateRelationshipScore(contact: any): Promise<number> {
+    let score = 0;
+
+    // Base score from having contact info
+    if (contact.name) score += 10;
+    if (contact.email) score += 5;
+    if (contact.phone) score += 5;
+    if (contact.company) score += 5;
+    if (contact.title) score += 5;
+
+    // Voice notes indicate interaction depth
+    if (contact.voice_notes && contact.voice_notes.length > 0) {
+      score += Math.min(contact.voice_notes.length * 5, 25); // Max 25 points for voice notes
+    }
+
+    // Recency bonus (recent interactions are worth more)
+    if (contact.last_interaction_date) {
+      const daysSinceLastInteraction = Math.floor(
+        (Date.now() - new Date(contact.last_interaction_date).getTime()) / (1000 * 60 * 60 * 24)
+      );
+      
+      if (daysSinceLastInteraction <= 7) score += 20;
+      else if (daysSinceLastInteraction <= 30) score += 15;
+      else if (daysSinceLastInteraction <= 90) score += 10;
+      else if (daysSinceLastInteraction <= 365) score += 5;
+    }
+
+    // Company size/importance bonus
+    if (contact.company) {
+      const company = contact.company.toLowerCase();
+      if (company.includes('google') || company.includes('microsoft') || company.includes('apple') || 
+          company.includes('amazon') || company.includes('meta') || company.includes('netflix')) {
+        score += 10; // Big tech bonus
+      } else if (company.includes('startup') || company.includes('inc') || company.includes('llc')) {
+        score += 5; // Startup bonus
+      }
+    }
+
+    // Role importance bonus
+    if (contact.title) {
+      const title = contact.title.toLowerCase();
+      if (title.includes('ceo') || title.includes('founder') || title.includes('cto') || 
+          title.includes('coo') || title.includes('president')) {
+        score += 10; // Leadership bonus
+      } else if (title.includes('manager') || title.includes('director') || title.includes('head')) {
+        score += 5; // Management bonus
+      }
+    }
+
+    // Cap at 100
+    return Math.min(score, 100);
   }
 
   async findSimilar(contactId: string, limit: number = 5): Promise<any[]> {

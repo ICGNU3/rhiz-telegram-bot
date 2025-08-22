@@ -22,6 +22,11 @@ export class CommandHandler {
 
     logger.info(`Processing command: ${command} for user: ${username || userId}`);
 
+    // Handle natural language queries first
+    if (!command.startsWith('/')) {
+      return this.handleNaturalLanguageQuery(command, context);
+    }
+
     switch (command.toLowerCase()) {
       case '/start':
         return this.handleStart(context);
@@ -72,6 +77,88 @@ export class CommandHandler {
           return `Unknown command: ${command}\n\nType /help to see available commands.`;
         }
         return '';
+    }
+  }
+
+  private async handleNaturalLanguageQuery(text: string, context: CommandContext): Promise<string> {
+    const lowerText = text.toLowerCase();
+    
+    try {
+      // Import services
+      const contactService = (await import('../services/contacts')).default;
+      const db = (await import('../db/supabase')).default;
+      
+      // Find user
+      const user = await db.users.findByTelegramId(context.userId!);
+      if (!user) {
+        return 'Please use /start first to initialize your account.';
+      }
+
+      // Pattern 1: "Who do I know at [company]?"
+      const companyMatch = lowerText.match(/who do i know at (.+?)(?:\?|$)/);
+      if (companyMatch) {
+        const company = companyMatch[1].trim();
+        const contacts = await contactService.findByCompany(user.id, company);
+        return this.formatCompanyContacts(contacts, company);
+      }
+
+      // Pattern 2: "Find [role/title]"
+      const roleMatch = lowerText.match(/find (.+?)(?:\?|$)/);
+      if (roleMatch) {
+        const role = roleMatch[1].trim();
+        const contacts = await contactService.findByRole(user.id, role);
+        return this.formatRoleContacts(contacts, role);
+      }
+
+      // Pattern 3: "Show me my [type] contacts"
+      const typeMatch = lowerText.match(/show me my (.+?) contacts/);
+      if (typeMatch) {
+        const type = typeMatch[1].trim();
+        const contacts = await contactService.findByType(user.id, type);
+        return this.formatTypeContacts(contacts, type);
+      }
+
+      // Pattern 4: "Who should I follow up with?"
+      if (lowerText.includes('follow up') || lowerText.includes('check in')) {
+        const contacts = await contactService.findNeedingFollowUp(user.id);
+        return this.formatFollowUpContacts(contacts);
+      }
+
+      // Pattern 5: "My strongest connections"
+      if (lowerText.includes('strongest') || lowerText.includes('best') || lowerText.includes('closest')) {
+        const contacts = await contactService.findStrongestConnections(user.id);
+        return this.formatStrongestContacts(contacts);
+      }
+
+      // Pattern 6: "Recent contacts"
+      if (lowerText.includes('recent') || lowerText.includes('latest') || lowerText.includes('new')) {
+        const contacts = await contactService.findRecentContacts(user.id);
+        return this.formatRecentContacts(contacts);
+      }
+
+      // Pattern 7: "Who could help with [topic]?"
+      const helpMatch = lowerText.match(/who could help with (.+?)(?:\?|$)/);
+      if (helpMatch) {
+        const topic = helpMatch[1].trim();
+        const contacts = await contactService.findByExpertise(user.id, topic);
+        return this.formatExpertiseContacts(contacts, topic);
+      }
+
+      // Default: Suggest voice input
+      return `I understand you're asking about your network. Try these natural queries:
+
+• "Who do I know at Google?"
+• "Find investors in fintech"
+• "Show me my strongest connections"
+• "Who should I follow up with?"
+• "Recent contacts"
+• "Who could help with marketing?"
+
+Or send a voice message describing what you're looking for! 🎙️`;
+      
+    } catch (error) {
+      logger.error('Error processing natural language query:', error);
+      return 'Sorry, I encountered an error processing your request. Please try again!';
     }
   }
 
@@ -304,6 +391,133 @@ If sharing contacts doesn't work, try:
 • Using voice messages to describe contacts
 
 Ready? Start sharing your contacts with the bot! 📲`;
+  }
+
+  private formatCompanyContacts(contacts: any[], company: string): string {
+    if (contacts.length === 0) {
+      return `You don't have any contacts at ${company} yet.\n\nTry adding some with voice messages like:\n"I met John at ${company}"`;
+    }
+
+    let message = `👥 **Your contacts at ${company}** (${contacts.length}):\n\n`;
+    
+    contacts.forEach((contact, index) => {
+      message += `${index + 1}. **${contact.name}**`;
+      if (contact.title) message += ` - ${contact.title}`;
+      if (contact.relationship_strength) message += ` (Strength: ${contact.relationship_strength}/100)`;
+      message += '\n';
+    });
+
+    return message;
+  }
+
+  private formatRoleContacts(contacts: any[], role: string): string {
+    if (contacts.length === 0) {
+      return `You don't have any ${role} contacts yet.\n\nTry adding some with voice messages like:\n"I met a ${role} at the conference"`;
+    }
+
+    let message = `👥 **Your ${role} contacts** (${contacts.length}):\n\n`;
+    
+    contacts.forEach((contact, index) => {
+      message += `${index + 1}. **${contact.name}**`;
+      if (contact.company) message += ` at ${contact.company}`;
+      if (contact.relationship_strength) message += ` (Strength: ${contact.relationship_strength}/100)`;
+      message += '\n';
+    });
+
+    return message;
+  }
+
+  private formatTypeContacts(contacts: any[], type: string): string {
+    if (contacts.length === 0) {
+      return `You don't have any ${type} contacts yet.\n\nTry adding some with voice messages!`;
+    }
+
+    let message = `👥 **Your ${type} contacts** (${contacts.length}):\n\n`;
+    
+    contacts.forEach((contact, index) => {
+      message += `${index + 1}. **${contact.name}**`;
+      if (contact.title) message += ` - ${contact.title}`;
+      if (contact.company) message += ` at ${contact.company}`;
+      message += '\n';
+    });
+
+    return message;
+  }
+
+  private formatFollowUpContacts(contacts: any[]): string {
+    if (contacts.length === 0) {
+      return `🎉 Great! All your relationships are up to date.\n\nKeep building your network with voice messages!`;
+    }
+
+    let message = `📞 **Contacts needing follow-up** (${contacts.length}):\n\n`;
+    
+    contacts.forEach((contact, index) => {
+      message += `${index + 1}. **${contact.name}**`;
+      if (contact.company) message += ` at ${contact.company}`;
+      if (contact.last_interaction_date) {
+        const daysAgo = Math.floor((Date.now() - new Date(contact.last_interaction_date).getTime()) / (1000 * 60 * 60 * 24));
+        message += ` (${daysAgo} days ago)`;
+      }
+      message += '\n';
+    });
+
+    message += '\n💡 **Follow-up ideas:**\n• Send a quick check-in message\n• Share relevant industry news\n• Ask about their recent projects\n• Offer to help with something';
+
+    return message;
+  }
+
+  private formatStrongestContacts(contacts: any[]): string {
+    if (contacts.length === 0) {
+      return `Start building strong relationships! Add contacts with voice messages and interact regularly.`;
+    }
+
+    let message = `💪 **Your strongest connections** (${contacts.length}):\n\n`;
+    
+    contacts.forEach((contact, index) => {
+      message += `${index + 1}. **${contact.name}**`;
+      if (contact.title) message += ` - ${contact.title}`;
+      if (contact.company) message += ` at ${contact.company}`;
+      message += ` (Strength: ${contact.relationship_strength}/100)\n`;
+    });
+
+    return message;
+  }
+
+  private formatRecentContacts(contacts: any[]): string {
+    if (contacts.length === 0) {
+      return `No contacts yet! Start building your network with voice messages.`;
+    }
+
+    let message = `🆕 **Recently added contacts** (${contacts.length}):\n\n`;
+    
+    contacts.forEach((contact, index) => {
+      const daysAgo = Math.floor((Date.now() - new Date(contact.created_at).getTime()) / (1000 * 60 * 60 * 24));
+      message += `${index + 1}. **${contact.name}**`;
+      if (contact.title) message += ` - ${contact.title}`;
+      if (contact.company) message += ` at ${contact.company}`;
+      message += ` (${daysAgo} days ago)\n`;
+    });
+
+    return message;
+  }
+
+  private formatExpertiseContacts(contacts: any[], topic: string): string {
+    if (contacts.length === 0) {
+      return `No contacts found with ${topic} expertise.\n\nTry adding more diverse contacts or be more specific with your search.`;
+    }
+
+    let message = `🎯 **Contacts who could help with ${topic}** (${contacts.length}):\n\n`;
+    
+    contacts.forEach((contact, index) => {
+      message += `${index + 1}. **${contact.name}**`;
+      if (contact.title) message += ` - ${contact.title}`;
+      if (contact.company) message += ` at ${contact.company}`;
+      message += '\n';
+    });
+
+    message += '\n💡 **Next steps:**\n• Send them a message about your ${topic} needs\n• Ask for advice or introductions\n• Offer to help them in return';
+
+    return message;
   }
 }
 
