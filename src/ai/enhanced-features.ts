@@ -191,10 +191,10 @@ class EnhancedFeatures {
     try {
       const optimizedGoals = currentGoals.map(goal => {
         // Adjust priority based on user behavior
-        const newPriority = this.calculateGoalPriority(goal, _userBehavior);
+        const newPriority = this.calculateGoalPriority(goal);
         
         // Suggest timeline adjustments
-        const suggestedTimeline = this.suggestTimelineAdjustment(goal, _userBehavior);
+        const suggestedTimeline = this.suggestTimelineAdjustment(goal);
         
         return {
           ...goal,

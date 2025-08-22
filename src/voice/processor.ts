@@ -90,12 +90,12 @@ export class VoiceProcessor {
       );
       
       // Detect intent for backward compatibility
-      const intent = await gpt4Service.detectIntent(transcript);
-      logger.info(`Detected intent: ${intent}`);
+      const intentResult = await gpt4Service.detectIntent(transcript);
+      logger.info(`Detected intent: ${intentResult.intent}`);
       
       return {
         transcript,
-        intent,
+        intent: intentResult.intent,
         response: conversationResult.response,
         audioResponse: conversationResult.audioResponse,
         sessionId: conversationResult.sessionId,
@@ -128,14 +128,13 @@ export class VoiceProcessor {
       logger.info(`Transcript: ${transcript}`);
       
       // Detect intent
-      const intent = await gpt4Service.detectIntent(transcript);
+      const intentResult = await gpt4Service.detectIntent(transcript);
+      const intent = intentResult.intent;
       logger.info(`Detected intent: ${intent}`);
       
       // Generate response based on intent and context
       const response = await gpt4Service.generateVoiceResponse(
-        JSON.stringify(context || {}),
-        transcript,
-        userId
+        transcript
       );
       logger.info(`Response: ${response}`);
       
@@ -144,7 +143,7 @@ export class VoiceProcessor {
       
       return {
         transcript,
-        intent,
+        intent: intentResult.intent,
         response,
         audioResponse,
       };

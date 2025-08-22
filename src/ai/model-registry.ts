@@ -1,73 +1,67 @@
 import logger from '../utils/logger';
 
-// Model capability definitions
 interface ModelCapabilities {
-  contextWindow: number;
-  costPer1kTokens: { input: number; output: number };
   quality: 'basic' | 'standard' | 'advanced' | 'premium';
+  speed: 'fast' | 'medium' | 'slow';
+  costPer1kTokens: {
+    input: number;
+    output: number;
+  };
   features: {
     json: boolean;
     functions: boolean;
     vision: boolean;
-    streaming: boolean;
   };
-  speed: 'fast' | 'medium' | 'slow';
 }
 
-// Model registry with capabilities
-export const MODEL_REGISTRY: Record<string, ModelCapabilities> = {
-  // GPT-4 models (for complex tasks)
-  'gpt-4-turbo-preview': {
-    contextWindow: 128000,
-    costPer1kTokens: { input: 0.01, output: 0.03 },
-    quality: 'premium',
-    features: { json: true, functions: true, vision: true, streaming: true },
-    speed: 'medium'
-  },
-  
-  // GPT-3.5 Turbo (default for most tasks)
-  'gpt-3.5-turbo': {
-    contextWindow: 16385,
-    costPer1kTokens: { input: 0.0005, output: 0.0015 },
-    quality: 'standard',
-    features: { json: true, functions: true, vision: false, streaming: true },
-    speed: 'fast'
-  },
-  
-  // Embedding models
-  'text-embedding-3-small': {
-    contextWindow: 8191,
-    costPer1kTokens: { input: 0.00002, output: 0 },
-    quality: 'standard',
-    features: { json: false, functions: false, vision: false, streaming: false },
-    speed: 'fast'
-  },
-  'text-embedding-3-large': {
-    contextWindow: 8191,
-    costPer1kTokens: { input: 0.00013, output: 0 },
-    quality: 'advanced',
-    features: { json: false, functions: false, vision: false, streaming: false },
-    speed: 'fast'
-  }
-};
-
-// Task complexity definitions
-export type TaskComplexity = 'simple' | 'moderate' | 'complex' | 'critical';
-
-export interface TaskRequirements {
-  complexity: TaskComplexity;
+interface TaskRequirements {
+  complexity: 'simple' | 'medium' | 'complex';
   needsJson?: boolean;
   needsFunctions?: boolean;
   needsVision?: boolean;
-  maxResponseTokens?: number;
   preferSpeed?: boolean;
   preferQuality?: boolean;
 }
 
-export class ModelSelector {
+interface ModelPerformance {
+  model: string;
+  task: string;
+  successRate: number;
+  avgResponseTime: number;
+  lastUsed: Date;
+}
+
+export const MODEL_REGISTRY: Record<string, ModelCapabilities> = {
+  'gpt-4': {
+    quality: 'premium',
+    speed: 'slow',
+    costPer1kTokens: { input: 0.03, output: 0.06 },
+    features: { json: true, functions: true, vision: true }
+  },
+  'gpt-4-turbo': {
+    quality: 'advanced',
+    speed: 'medium',
+    costPer1kTokens: { input: 0.01, output: 0.03 },
+    features: { json: true, functions: true, vision: true }
+  },
+  'gpt-3.5-turbo': {
+    quality: 'standard',
+    speed: 'fast',
+    costPer1kTokens: { input: 0.0015, output: 0.002 },
+    features: { json: true, functions: true, vision: false }
+  },
+  'gpt-3.5-turbo-16k': {
+    quality: 'standard',
+    speed: 'fast',
+    costPer1kTokens: { input: 0.003, output: 0.004 },
+    features: { json: true, functions: true, vision: false }
+  }
+};
+
+class ModelSelector {
+  private performanceData: Map<string, ModelPerformance[]> = new Map();
   private modelOverrides: Map<string, string> = new Map();
-  private performanceMetrics: Map<string, { avgLatency: number; successRate: number }> = new Map();
-  
+
   /**
    * Get the optimal model for a specific task
    */
@@ -78,7 +72,7 @@ export class ModelSelector {
       
       if (taskPerformance && taskPerformance.length > 0) {
         // Use the best performing model for this task
-        const bestModel = taskPerformance.reduce((best, current) => 
+        const bestModel = taskPerformance.reduce((best: ModelPerformance, current: ModelPerformance) => 
           current.successRate > best.successRate ? current : best
         );
         
@@ -92,6 +86,22 @@ export class ModelSelector {
     } catch (error) {
       logger.error('Error in model selection, using fallback:', error);
       return this.getModelByComplexity(complexity);
+    }
+  }
+
+  /**
+   * Get model by complexity level
+   */
+  private getModelByComplexity(complexity: 'simple' | 'medium' | 'complex'): string {
+    switch (complexity) {
+      case 'simple':
+        return 'gpt-3.5-turbo';
+      case 'medium':
+        return 'gpt-3.5-turbo';
+      case 'complex':
+        return 'gpt-4-turbo';
+      default:
+        return 'gpt-3.5-turbo';
     }
   }
 
@@ -120,101 +130,93 @@ export class ModelSelector {
     
     return { modelA, modelB, recommendation };
   }
-  
+
   /**
-   * Get default requirements based on task type
+   * Get model performance data
    */
-  private getDefaultRequirements(task: string): TaskRequirements {
-    const taskMap: Record<string, TaskRequirements> = {
-      // Simple tasks - use fast, cheap models (GPT-3.5 Turbo)
-      'intent_detection': {
-        complexity: 'simple',
-        preferSpeed: true,
-        needsJson: true
-      },
-      'sentiment_analysis': {
-        complexity: 'simple',
-        preferSpeed: true,
-        needsJson: true
-      },
-      'basic_response': {
-        complexity: 'simple',
-        preferSpeed: true
-      },
-      'contact_validation': {
-        complexity: 'simple',
-        needsJson: true,
-        preferSpeed: true
-      },
-      
-      // Moderate tasks - balance quality and cost (GPT-3.5 Turbo)
-      'contact_extraction': {
-        complexity: 'moderate',
-        needsJson: true,
-        preferQuality: true
-      },
-      'goal_analysis': {
-        complexity: 'moderate',
-        needsJson: true
-      },
-      'follow_up_generation': {
-        complexity: 'moderate',
-        preferQuality: true
-      },
-      'reminder_creation': {
-        complexity: 'moderate',
-        needsJson: true
-      },
-      
-      // Complex tasks - use GPT-4 for premium quality
-      'relationship_scoring': {
-        complexity: 'complex',
-        needsJson: true,
-        preferQuality: true
-      },
-      'introduction_generation': {
-        complexity: 'complex',
-        maxResponseTokens: 300,
-        preferQuality: true
-      },
-      'conversation_analysis': {
-        complexity: 'complex',
-        needsJson: true,
-        preferQuality: true
-      },
-      'network_insights': {
-        complexity: 'complex',
-        needsJson: true,
-        preferQuality: true
-      },
-      
-      // Critical tasks - use best available (GPT-4)
-      'network_analysis': {
-        complexity: 'critical',
-        needsJson: true,
-        preferQuality: true
-      },
-      'strategic_planning': {
-        complexity: 'critical',
-        needsJson: true,
-        preferQuality: true
-      }
-    };
+  private getModelPerformance(modelName: string, task: string): ModelPerformance {
+    const taskPerformance = this.performanceData.get(task);
+    const modelPerformance = taskPerformance?.find(p => p.model === modelName);
     
-    return taskMap[task] || {
-      complexity: 'moderate',
-      needsJson: false
+    if (modelPerformance) {
+      return modelPerformance;
+    }
+    
+    // Return default performance if no data available
+    return {
+      model: modelName,
+      task,
+      successRate: 0.5,
+      avgResponseTime: 2000,
+      lastUsed: new Date()
     };
   }
-  
+
   /**
-   * Set a manual override for testing new models
+   * Record performance metrics for a model
+   */
+  recordPerformance(model: string, task: string, responseTime: number, success: boolean): void {
+    try {
+      const taskPerformance = this.performanceData.get(task) || [];
+      const existingIndex = taskPerformance.findIndex(p => p.model === model);
+      
+      const performance: ModelPerformance = {
+        model,
+        task,
+        successRate: success ? 1.0 : 0.0,
+        avgResponseTime: responseTime,
+        lastUsed: new Date()
+      };
+      
+      if (existingIndex >= 0) {
+        // Update existing performance data
+        const existing = taskPerformance[existingIndex];
+        const totalAttempts = existing.successRate * 10 + (success ? 1 : 0); // Estimate total attempts
+        const newSuccessRate = (existing.successRate * 10 + (success ? 1 : 0)) / (totalAttempts + 1);
+        const newAvgResponseTime = (existing.avgResponseTime + responseTime) / 2;
+        
+        taskPerformance[existingIndex] = {
+          ...performance,
+          successRate: newSuccessRate,
+          avgResponseTime: newAvgResponseTime
+        };
+      } else {
+        // Add new performance data
+        taskPerformance.push(performance);
+      }
+      
+      this.performanceData.set(task, taskPerformance);
+    } catch (error) {
+      logger.error('Error recording performance:', error);
+    }
+  }
+
+  /**
+   * Get performance report for all models
+   */
+  getPerformanceReport(): Record<string, any> {
+    const report: Record<string, any> = {};
+    
+    for (const [task, performances] of this.performanceData.entries()) {
+      report[task] = performances.map(p => ({
+        model: p.model,
+        successRate: p.successRate,
+        avgResponseTime: p.avgResponseTime,
+        lastUsed: p.lastUsed.toISOString()
+      }));
+    }
+    
+    return report;
+  }
+
+  /**
+   * Set model override for testing
    */
   setModelOverride(task: string, model: string): void {
     this.modelOverrides.set(task, model);
     logger.info(`Set model override for ${task}: ${model}`);
   }
-  
+
   /**
    * Clear model override
    */
@@ -222,53 +224,46 @@ export class ModelSelector {
     this.modelOverrides.delete(task);
     logger.info(`Cleared model override for ${task}`);
   }
-  
+
   /**
-   * Record performance metrics for continuous improvement
+   * Get model capabilities
    */
-  recordPerformance(model: string, latency: number, success: boolean): void {
-    const current = this.performanceMetrics.get(model) || { avgLatency: 0, successRate: 1 };
-    
-    // Simple moving average
-    const newAvgLatency = (current.avgLatency * 0.9) + (latency * 0.1);
-    const newSuccessRate = (current.successRate * 0.95) + (success ? 0.05 : 0);
-    
-    this.performanceMetrics.set(model, {
-      avgLatency: newAvgLatency,
-      successRate: newSuccessRate
-    });
+  getModelCapabilities(modelName: string): ModelCapabilities | null {
+    return MODEL_REGISTRY[modelName] || null;
   }
-  
+
   /**
-   * Get performance report for monitoring
+   * Get all available models
    */
-  getPerformanceReport(): Record<string, any> {
-    const report: Record<string, any> = {};
+  getAvailableModels(): string[] {
+    return Object.keys(MODEL_REGISTRY);
+  }
+
+  /**
+   * Check if model supports specific features
+   */
+  supportsFeature(modelName: string, feature: keyof ModelCapabilities['features']): boolean {
+    const capabilities = this.getModelCapabilities(modelName);
+    return capabilities?.features[feature] || false;
+  }
+
+  /**
+   * Get cost estimate for a model
+   */
+  getCostEstimate(modelName: string, inputTokens: number, outputTokens: number): number {
+    const capabilities = this.getModelCapabilities(modelName);
+    if (!capabilities) return 0;
     
-    this.performanceMetrics.forEach((metrics, model) => {
-      report[model] = {
-        avgLatency: Math.round(metrics.avgLatency),
-        successRate: (metrics.successRate * 100).toFixed(1) + '%'
-      };
-    });
+    const inputCost = (inputTokens / 1000) * capabilities.costPer1kTokens.input;
+    const outputCost = (outputTokens / 1000) * capabilities.costPer1kTokens.output;
     
-    return report;
+    return inputCost + outputCost;
   }
 }
 
-// Singleton instance
 export const modelSelector = new ModelSelector();
 
-// Backward compatibility wrapper
-export function getModelForTask(task: string, complexity?: 'low' | 'medium' | 'high'): string {
-  // Map old complexity to new system
-  const complexityMap = {
-    'low': 'simple' as TaskComplexity,
-    'medium': 'moderate' as TaskComplexity,
-    'high': 'complex' as TaskComplexity
-  };
-  
-  return modelSelector.getOptimalModel(task, {
-    complexity: complexityMap[complexity || 'medium']
-  });
+// Legacy function for backward compatibility
+export function getModelForTask(task: string, complexity: 'simple' | 'medium' | 'complex' = 'medium'): string {
+  return modelSelector.getOptimalModel(task, complexity);
 }

@@ -17,7 +17,7 @@ class ContactService {
       const existingContacts = await db.contacts.findByUserId(userId);
       const existing = existingContacts.find(
         (c: any) => 
-          c.name.toLowerCase() === contactInfo.name.toLowerCase() ||
+          contactInfo.name && c.name.toLowerCase() === (contactInfo.name || '').toLowerCase() ||
           (contactInfo.email && c.email === contactInfo.email) ||
           (contactInfo.phone && c.phone === contactInfo.phone)
       );

@@ -53,10 +53,10 @@ export class CommandHandler {
         return this.getUserStats(context);
       
       case '/contacts':
-        return this.listContacts(context);
+        return this.listContacts();
       
       case '/goals':
-        return this.listGoals(context);
+        return this.listGoals();
       
       case '/import':
         return this.showImportOptions();
@@ -176,6 +176,7 @@ Try adding your first contact!`;
   }
 
   private listGoals(): string {
+
     return `🎯 **Your Goals**
 
 You haven't set any goals yet.

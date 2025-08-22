@@ -282,7 +282,7 @@ Extract:
 Respond in JSON format.
 `;
       
-      const response = await gpt4Service.generateVoiceResponse('', prompt);
+      const response = await gpt4Service.generateVoiceResponse(prompt);
       
       try {
         const inferred = JSON.parse(response);
