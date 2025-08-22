@@ -167,19 +167,56 @@ app.post('/webhook/:botToken', telegramRateLimit, voiceMessageSizeLimit, cleanup
       
       logger.info(`Processing message from ${message.from?.username}: ${text}`);
       
-      // Handle the message using existing logic
-      // For now, just acknowledge receipt
-      const response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: chatId,
-          text: '✅ Message received! Processing...'
-        })
-      });
-      
-      if (!response.ok) {
-        logger.error('Failed to send Telegram response:', await response.text());
+      try {
+        // Import and use the command handler
+        const commandHandler = (await import('./bot/commandHandler')).default;
+        
+        // Check if it's a command
+        if (commandHandler.isCommand(text)) {
+          const response = await commandHandler.handleCommand(text, {
+            chatId,
+            userId,
+            username: message.from?.username
+          });
+          
+          if (response) {
+            await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                chat_id: chatId,
+                text: response,
+                parse_mode: 'Markdown'
+              })
+            });
+          }
+        } else if (text.trim()) {
+          // Handle regular text messages
+          const response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: `I received your message: "${text}"\n\nTry sending a voice message for the best experience, or use /help to see available commands!`
+            })
+          });
+          
+          if (!response.ok) {
+            logger.error('Failed to send Telegram response:', await response.text());
+          }
+        }
+      } catch (error) {
+        logger.error('Error processing message:', error);
+        
+        // Send error message to user
+        await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: 'Sorry, I encountered an error processing your message. Please try again!'
+          })
+        });
       }
     }
     
