@@ -4,6 +4,30 @@ import rateLimiter from '../utils/rateLimiter';
 import logger from '../utils/logger';
 import config from '../utils/config';
 
+/**
+ * Sanitize user input to prevent injection attacks
+ */
+function sanitizeInput(input: string): string {
+  if (typeof input !== 'string') {
+    return '';
+  }
+  
+  // Remove potential SQL injection attempts
+  let sanitized = input.replace(/['";\\]/g, '');
+  
+  // Remove potential XSS attempts
+  sanitized = sanitized.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '');
+  sanitized = sanitized.replace(/javascript:/gi, '');
+  sanitized = sanitized.replace(/on\w+\s*=/gi, '');
+  
+  // Limit length
+  if (sanitized.length > 4096) {
+    sanitized = sanitized.substring(0, 4096);
+  }
+  
+  return sanitized.trim();
+}
+
 interface ProductionRequest extends Request {
   userId?: string;
   startTime?: number;
@@ -181,6 +205,19 @@ export function inputValidation(req: ProductionRequest, res: Response, next: Nex
           return;
         }
 
+        // Sanitize and validate text content
+        if (message.text) {
+          const sanitizedText = sanitizeInput(message.text);
+          if (sanitizedText.length > 4096) { // Telegram's limit
+            res.status(400).json({
+              error: 'Message too long',
+              message: 'Message must be shorter than 4096 characters'
+            });
+            return;
+          }
+          message.text = sanitizedText;
+        }
+
         // Validate voice message size
         if (message.voice && message.voice.file_size) {
           const maxSize = 50 * 1024 * 1024; // 50MB
@@ -188,6 +225,18 @@ export function inputValidation(req: ProductionRequest, res: Response, next: Nex
             res.status(413).json({
               error: 'Voice message too large',
               message: 'Voice message must be smaller than 50MB'
+            });
+            return;
+          }
+        }
+
+        // Validate file size for other file types
+        if (message.document && message.document.file_size) {
+          const maxSize = 20 * 1024 * 1024; // 20MB for documents
+          if (message.document.file_size > maxSize) {
+            res.status(413).json({
+              error: 'File too large',
+              message: 'File must be smaller than 20MB'
             });
             return;
           }

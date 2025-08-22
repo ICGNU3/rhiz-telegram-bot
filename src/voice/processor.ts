@@ -15,6 +15,8 @@ if (ffmpegStatic) {
 
 export class VoiceProcessor {
   private tempDir: string;
+  private readonly MAX_VOICE_SIZE = 50 * 1024 * 1024; // 50MB limit
+  private readonly MAX_DURATION_SECONDS = 300; // 5 minutes limit
 
   constructor() {
     this.tempDir = path.join(process.cwd(), 'temp');
@@ -75,6 +77,16 @@ export class VoiceProcessor {
     suggestedActions: string[];
   }> {
     try {
+      // Validate file size
+      if (audioBuffer.length > this.MAX_VOICE_SIZE) {
+        throw new Error(`Voice message too large. Maximum size is ${Math.round(this.MAX_VOICE_SIZE / 1024 / 1024)}MB`);
+      }
+
+      // Validate buffer is not empty
+      if (audioBuffer.length === 0) {
+        throw new Error('Voice message is empty');
+      }
+
       // Convert OGG to WAV for Whisper
       const wavPath = await this.convertOggToWav(audioBuffer);
       
@@ -105,6 +117,37 @@ export class VoiceProcessor {
     } catch (error) {
       logger.error('Error processing voice message:', error);
       throw error;
+    } finally {
+      // Clean up temporary files
+      this.cleanupTempFiles();
+    }
+  }
+
+  /**
+   * Clean up temporary files to prevent disk space issues
+   */
+  private cleanupTempFiles(): void {
+    try {
+      const files = fs.readdirSync(this.tempDir);
+      const now = Date.now();
+      const maxAge = 5 * 60 * 1000; // 5 minutes
+
+      files.forEach(file => {
+        const filePath = path.join(this.tempDir, file);
+        const stats = fs.statSync(filePath);
+        
+        // Delete files older than 5 minutes
+        if (now - stats.mtime.getTime() > maxAge) {
+          try {
+            fs.unlinkSync(filePath);
+            logger.debug(`Cleaned up old temp file: ${file}`);
+          } catch (err) {
+            logger.warn(`Failed to clean up temp file: ${file}`, err);
+          }
+        }
+      });
+    } catch (error) {
+      logger.warn('Error during temp file cleanup:', error);
     }
   }
 
@@ -153,25 +196,7 @@ export class VoiceProcessor {
     }
   }
 
-  cleanupTempFiles(): void {
-    try {
-      const files = fs.readdirSync(this.tempDir);
-      const now = Date.now();
-      const maxAge = 3600000; // 1 hour
 
-      files.forEach(file => {
-        const filePath = path.join(this.tempDir, file);
-        const stats = fs.statSync(filePath);
-        
-        if (now - stats.mtimeMs > maxAge) {
-          fs.unlinkSync(filePath);
-          logger.info(`Cleaned up old temp file: ${file}`);
-        }
-      });
-    } catch (error) {
-      logger.error('Error cleaning up temp files:', error);
-    }
-  }
 
   // Performance monitoring
   getPerformanceMetrics(): {
