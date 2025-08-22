@@ -75,8 +75,8 @@ export class CommandHandler {
     }
   }
 
-  private handleStart(context: CommandContext): string {
-    const { userId, username } = context;
+  private handleStart(_context: CommandContext): string {
+    const { userId, username } = _context;
     
     if (userId) {
       this.userMessageCount.set(userId, 1);
@@ -86,8 +86,8 @@ export class CommandHandler {
     return onboardingService.getWelcomeMessage(username);
   }
 
-  private handleTutorial(context: CommandContext): string {
-    const { userId } = context;
+  private handleTutorial(_context: CommandContext): string {
+    const { userId } = _context;
     const tutorials = onboardingService.getTutorial();
     
     if (!userId) {
@@ -100,8 +100,8 @@ export class CommandHandler {
     return tutorials[0] + `\n\n${progress}\n📌 Send /next to continue or /skip to exit tutorial`;
   }
 
-  private handleNextTutorial(context: CommandContext): string {
-    const { userId } = context;
+  private handleNextTutorial(_context: CommandContext): string {
+    const { userId } = _context;
     
     if (!userId) {
       return 'Please start the tutorial first with /tutorial';

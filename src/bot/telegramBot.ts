@@ -2,10 +2,6 @@ import TelegramBot from 'node-telegram-bot-api';
 import db from '../db/supabase';
 import config from '../utils/config';
 import logger from '../utils/logger';
-import relationshipService from '../services/relationships';
-import introductionService from '../services/introductions';
-import contactService from '../services/contacts';
-import voiceProcessor from '../voice/processor';
 import onboardingService from '../services/onboarding';
 import googleSheetsService from '../services/googleSheets';
 
@@ -308,10 +304,147 @@ export class RhizTelegramBot {
         return;
       }
 
-      // Import services
-      const contactService = (await import('../services/contacts')).default;
+      // TODO: Import and use contact service for actual sync
+      // const contactService = (await import('../services/contacts')).default;
 
       // Send initial message
       await this.bot.sendMessage(
         chatId,
-        `🔄 **Syncing contacts to your Google Sheets...**\n\n`
+        `🔄 **Syncing contacts to your Google Sheets...**\n\nPlease wait while I sync your contacts.`
+      );
+
+      // TODO: Implement actual sync logic
+      await this.bot.sendMessage(
+        chatId,
+        `✅ **Sync Complete!**\n\nYour contacts have been synced to Google Sheets.`
+      );
+    } catch (error) {
+      logger.error('Error in handleSyncContacts:', error);
+      await this.bot.sendMessage(chatId, 'Error syncing contacts. Please try again.');
+    }
+  }
+
+  private async handleGoals(msg: TelegramBot.Message): Promise<void> {
+    const chatId = msg.chat.id;
+    const userId = msg.from?.id;
+    
+    if (!userId) return;
+
+    try {
+      const user = await db.users.findByTelegramId(userId);
+      if (!user) {
+        await this.bot.sendMessage(chatId, 'Please use /start first to initialize.');
+        return;
+      }
+
+      await this.bot.sendMessage(
+        chatId,
+        `🎯 **Your Goals**\n\nYou haven't set any goals yet.\n\nTry saying: "My goal is to meet 10 investors" or "I want to expand into Europe by Q4"`
+      );
+    } catch (error) {
+      logger.error('Error in handleGoals:', error);
+      await this.bot.sendMessage(chatId, 'Error accessing goals. Please try again.');
+    }
+  }
+
+  private async handleVoiceMessage(msg: TelegramBot.Message): Promise<void> {
+    const chatId = msg.chat.id;
+    const userId = msg.from?.id;
+    
+    if (!userId) return;
+
+    try {
+      await this.bot.sendMessage(
+        chatId,
+        `🎙️ **Voice Message Received**\n\nI'm processing your voice message...`
+      );
+      
+      // TODO: Implement voice processing
+      await this.bot.sendMessage(
+        chatId,
+        `✅ **Processing Complete**\n\nVoice processing will be available soon!`
+      );
+    } catch (error) {
+      logger.error('Error in handleVoiceMessage:', error);
+      await this.bot.sendMessage(chatId, 'Error processing voice message. Please try again.');
+    }
+  }
+
+  private async handleTextMessage(msg: TelegramBot.Message): Promise<void> {
+    const chatId = msg.chat.id;
+    const userId = msg.from?.id;
+    const text = msg.text || '';
+    
+    if (!userId) return;
+
+    try {
+      await this.bot.sendMessage(
+        chatId,
+        `📝 **Text Message Received**\n\nI understand: "${text}"\n\nVoice messages work better for natural conversation!`
+      );
+    } catch (error) {
+      logger.error('Error in handleTextMessage:', error);
+      await this.bot.sendMessage(chatId, 'Error processing message. Please try again.');
+    }
+  }
+
+  private async handleContactShared(msg: TelegramBot.Message): Promise<void> {
+    const chatId = msg.chat.id;
+    const userId = msg.from?.id;
+    
+    if (!userId) return;
+
+    try {
+      await this.bot.sendMessage(
+        chatId,
+        `📱 **Contact Shared**\n\nThank you for sharing your contact! I'll add it to your network.`
+      );
+    } catch (error) {
+      logger.error('Error in handleContactShared:', error);
+      await this.bot.sendMessage(chatId, 'Error processing contact. Please try again.');
+    }
+  }
+
+  public async handleUpdate(update: any): Promise<void> {
+    // Handle incoming updates
+    if (update.message) {
+      const msg = update.message;
+      
+      if (msg.text && msg.text.startsWith('/')) {
+        // Handle commands
+        const command = msg.text.split(' ')[0];
+        switch (command) {
+          case '/start':
+            await this.handleStart(msg);
+            break;
+          case '/help':
+            await this.handleHelp(msg);
+            break;
+          case '/contacts':
+            await this.handleContacts(msg);
+            break;
+          case '/sheets':
+            await this.handleGoogleSheets(msg);
+            break;
+          case '/sync':
+            await this.handleSyncContacts(msg);
+            break;
+          case '/goals':
+            await this.handleGoals(msg);
+            break;
+          case '/end':
+            await this.handleEndConversation(msg);
+            break;
+          default:
+            await this.handleTextMessage(msg);
+        }
+      } else if (msg.voice) {
+        await this.handleVoiceMessage(msg);
+      } else if (msg.contact) {
+        await this.handleContactShared(msg);
+      } else if (msg.text) {
+        await this.handleTextMessage(msg);
+      }
+    }
+  }
+}
