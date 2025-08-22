@@ -25,6 +25,8 @@ interface Config {
   google: {
     clientEmail: string;
     privateKey: string;
+    clientId: string;
+    clientSecret: string;
   };
   sentry?: {
     dsn: string;
@@ -58,6 +60,8 @@ const config: Config = {
   google: {
     clientEmail: process.env.GOOGLE_SHEETS_CLIENT_EMAIL || '',
     privateKey: process.env.GOOGLE_SHEETS_PRIVATE_KEY ? process.env.GOOGLE_SHEETS_PRIVATE_KEY.replace(/\\n/g, '\n') : '',
+    clientId: process.env.GOOGLE_OAUTH_CLIENT_ID || '',
+    clientSecret: process.env.GOOGLE_OAUTH_CLIENT_SECRET || '',
   },
   sentry: process.env.SENTRY_DSN ? {
     dsn: process.env.SENTRY_DSN,

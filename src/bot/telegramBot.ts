@@ -30,6 +30,10 @@ export class RhizTelegramBot {
     // Goals command
     this.bot.onText(/\/goals/, this.handleGoals.bind(this));
     
+    // Google Sheets commands
+    this.bot.onText(/\/sheets/, this.handleGoogleSheets.bind(this));
+    this.bot.onText(/\/sync/, this.handleSyncContacts.bind(this));
+    
     // End conversation command
     this.bot.onText(/\/end/, this.handleEndConversation.bind(this));
     
@@ -112,6 +116,8 @@ export class RhizTelegramBot {
       `🎙️ Just send a voice message and talk naturally!\n\n` +
       `**Text Commands:**\n` +
       `📝 /contacts - View your contacts\n` +
+      `📊 /sheets - Get Google Sheets link\n` +
+      `🔄 /sync - Sync contacts to Google Sheets\n` +
       `🎯 /goals - Manage your goals\n` +
       `❓ /help - Show this help\n` +
       `🔚 /end - End current conversation\n\n` +
@@ -195,6 +201,134 @@ export class RhizTelegramBot {
     } catch (error) {
       logger.error('Error in handleContacts:', error);
       await this.bot.sendMessage(chatId, 'Error retrieving contacts. Please try again.');
+    }
+  }
+
+  private async handleGoogleSheets(msg: TelegramBot.Message): Promise<void> {
+    const chatId = msg.chat.id;
+    const userId = msg.from?.id;
+    
+    if (!userId) return;
+
+    try {
+      const user = await db.users.findByTelegramId(userId);
+      if (!user) {
+        await this.bot.sendMessage(chatId, 'Please use /start first to initialize.');
+        return;
+      }
+
+      // Import Google Sheets service
+      const googleSheetsService = (await import('../services/googleSheets')).default;
+      
+      // Check if user is connected to Google Sheets
+      if (!user.google_access_token || !user.google_sheets_id) {
+        const oauthUrl = googleSheetsService.getOAuthUrl(user.id);
+        
+        await this.bot.sendMessage(
+          chatId,
+          `📊 **Connect Your Google Sheets**\n\n` +
+          `To sync your contacts with Google Sheets:\n\n` +
+          `1. Click the link below to authorize\n` +
+          `2. Grant access to your Google account\n` +
+          `3. I'll create a spreadsheet for your contacts\n\n` +
+          `🔗 **Connect Now:** ${oauthUrl}\n\n` +
+          `After connecting, use /sync to sync your contacts!`,
+          { parse_mode: 'Markdown' }
+        );
+        return;
+      }
+
+      // User is connected, show their spreadsheet info
+      const userGoogleConfig = {
+        access_token: user.google_access_token,
+        refresh_token: user.google_refresh_token,
+        spreadsheet_id: user.google_sheets_id,
+        spreadsheet_url: user.google_sheets_url,
+        connected_at: user.updated_at
+      };
+
+      const spreadsheetInfo = await googleSheetsService.getSpreadsheetInfo(userGoogleConfig);
+      
+      if (spreadsheetInfo.error) {
+        await this.bot.sendMessage(
+          chatId,
+          `❌ **Connection Issue**\n\n` +
+          `There's an issue with your Google Sheets connection. Please reconnect:\n\n` +
+          `Use /connect to set up Google Sheets again.`,
+          { parse_mode: 'Markdown' }
+        );
+        return;
+      }
+
+      await this.bot.sendMessage(
+        chatId,
+        `📊 **Your Google Sheets**\n\n` +
+        `📋 **Title:** ${spreadsheetInfo.title}\n` +
+        `🔗 **Link:** ${spreadsheetInfo.url}\n` +
+        `📄 **Sheets:** ${spreadsheetInfo.sheets.join(', ')}\n\n` +
+        `Your contacts are automatically synced to this sheet with enriched data!\n\n` +
+        `Use /sync to manually sync your contacts.`,
+        { parse_mode: 'Markdown' }
+      );
+    } catch (error) {
+      logger.error('Error in handleGoogleSheets:', error);
+      await this.bot.sendMessage(chatId, 'Error accessing Google Sheets. Please try again.');
+    }
+  }
+
+  private async handleSyncContacts(msg: TelegramBot.Message): Promise<void> {
+    const chatId = msg.chat.id;
+    const userId = msg.from?.id;
+    
+    if (!userId) return;
+
+    try {
+      const user = await db.users.findByTelegramId(userId);
+      if (!user) {
+        await this.bot.sendMessage(chatId, 'Please use /start first to initialize.');
+        return;
+      }
+
+      // Check if user is connected to Google Sheets
+      if (!user.google_access_token || !user.google_sheets_id) {
+        await this.bot.sendMessage(
+          chatId,
+          `❌ **Not Connected**\n\n` +
+          `You need to connect your Google Sheets first.\n\n` +
+          `Use /sheets to set up the connection.`,
+          { parse_mode: 'Markdown' }
+        );
+        return;
+      }
+
+      // Import services
+      const contactService = (await import('../services/contacts')).default;
+
+      // Send initial message
+      await this.bot.sendMessage(
+        chatId,
+        `🔄 **Syncing contacts to your Google Sheets...**\n\n` +
+        `This will:\n` +
+        `• Sync all your contacts\n` +
+        `• Enrich with additional data\n` +
+        `• Update relationship insights\n\n` +
+        `Please wait...`,
+        { parse_mode: 'Markdown' }
+      );
+
+      // Sync contacts
+      await contactService.syncContactsToGoogleSheets(user.id);
+
+      await this.bot.sendMessage(
+        chatId,
+        `✅ **Contacts Synced Successfully!**\n\n` +
+        `Your contacts have been updated in your Google Sheets with enriched data!\n\n` +
+        `Use /sheets to view your spreadsheet.`,
+        { parse_mode: 'Markdown' }
+      );
+    } catch (error) {
+      logger.error('Error in handleSyncContacts:', error);
+      await this.bot.sendMessage(chatId, 'Error syncing contacts. Please try again.');
     }
   }
 

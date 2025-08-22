@@ -45,6 +45,88 @@ app.get('/health', (req, res) => {
 // Rate limit statistics endpoint
 app.get('/api/rate-limits', getRateLimitStats);
 
+// Google OAuth callback endpoint
+app.get('/auth/google/callback', async (req, res) => {
+  try {
+    const { code, state } = req.query;
+    
+    if (!code || !state) {
+      return res.status(400).json({ error: 'Missing authorization code or state' });
+    }
+
+    const userId = state as string;
+    
+    // Import Google Sheets service
+    const googleSheetsService = (await import('./services/googleSheets')).default;
+    
+    // Handle OAuth callback
+    const userConfig = await googleSheetsService.handleOAuthCallback(code as string, userId);
+    
+    // Create a new spreadsheet for the user
+    const spreadsheetId = await googleSheetsService.createContactsSheet(userConfig, `Rhiz Contacts - ${userId}`);
+    
+    // Update user's Google Sheets configuration
+    const db = (await import('./db/supabase')).default;
+    
+    await db.users.update(userId, {
+      google_access_token: userConfig.access_token,
+      google_refresh_token: userConfig.refresh_token,
+      google_sheets_id: spreadsheetId,
+      google_sheets_url: `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`,
+    });
+
+    // Return success page
+    res.send(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Google Sheets Connected!</title>
+          <style>
+            body { font-family: Arial, sans-serif; text-align: center; padding: 50px; }
+            .success { color: #28a745; font-size: 24px; margin-bottom: 20px; }
+            .info { color: #666; margin-bottom: 30px; }
+            .link { color: #007bff; text-decoration: none; }
+          </style>
+        </head>
+        <body>
+          <div class="success">✅ Google Sheets Connected Successfully!</div>
+          <div class="info">
+            Your Rhiz bot is now connected to Google Sheets.<br>
+            Your contacts will be automatically synced with enriched data.
+          </div>
+          <div>
+            <a href="https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit" class="link" target="_blank">
+              View Your Spreadsheet
+            </a>
+          </div>
+          <div style="margin-top: 30px; color: #999;">
+            You can close this window and return to Telegram.
+          </div>
+        </body>
+      </html>
+    `);
+    
+  } catch (error) {
+    logger.error('Error in Google OAuth callback:', error);
+    res.status(500).send(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Connection Error</title>
+          <style>
+            body { font-family: Arial, sans-serif; text-align: center; padding: 50px; }
+            .error { color: #dc3545; font-size: 24px; margin-bottom: 20px; }
+          </style>
+        </head>
+        <body>
+          <div class="error">❌ Connection Failed</div>
+          <div>There was an error connecting to Google Sheets. Please try again.</div>
+        </body>
+      </html>
+    `);
+  }
+});
+
 // Webhook endpoint for Telegram
 app.post('/webhook/:botToken', webhookRateLimit, voiceMessageSizeLimit, cleanupRateLimit, async (req, res) => {
   try {
@@ -225,7 +307,7 @@ Just tell me about people you meet or ask me anything about your network!
 📚 Type /samples to see example commands
 ❓ Type /faq for common questions`;
         } else if (text.toLowerCase().includes('help') || text.toLowerCase().includes('what can you do')) {
-          aiResponse = `🤖 Here's what I can do:\n\n📝 **Contact Management**\n• Extract contact info from voice messages\n• Save and organize your contacts\n• Find contact details when you need them\n\n💡 **Relationship Intelligence**\n• Track relationship strength\n• Suggest follow-up actions\n• Recommend introductions\n\n🎯 **Voice-First Interface**\n• Just speak naturally about people you meet\n• I'll understand and organize everything\n\nTry saying: "I just met Sarah, she's the CTO at TechStart..."`;
+          aiResponse = `🤖 Here's what I can do:\n\n📝 **Contact Management**\n• Extract contact info from voice messages\n• Save and organize your contacts\n• Find contact details when you need them\n\n💡 **Relationship Intelligence**\n• Track relationship strength\n• Suggest follow-up actions\n• Recommend introductions\n\n🎯 **Voice-First Interface**\n• Just speak naturally about people you meet\n• I'll understand and organize everything\n\nTry saying: "I just met Sarah, she's a CTO at TechStart..."`;
         } else if (text.toLowerCase().includes('contact') || text.toLowerCase().includes('person') || text.toLowerCase().includes('met') || text.includes('met') || text.includes('introduced')) {
           // Smart contact extraction
           const nameMatch = text.match(/(?:met|introduced to|talked with|saw)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)/i);

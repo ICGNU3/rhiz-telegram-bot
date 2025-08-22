@@ -1,5 +1,6 @@
 import db from '../db/supabase';
 import gpt4Service from '../ai/gpt4';
+import googleSheetsService from './googleSheets';
 import logger from '../utils/logger';
 
 class ContactService {
@@ -21,6 +22,7 @@ class ContactService {
           (contactInfo.phone && c.phone === contactInfo.phone)
       );
 
+      let contact;
       if (existing) {
         // Update existing contact
         const updates: any = {
@@ -37,23 +39,121 @@ class ContactService {
             : contactInfo.notes;
         }
 
-        return await db.contacts.update(existing.id, updates);
+        contact = await db.contacts.update(existing.id, updates);
       } else {
         // Create new contact
-        const newContact = await db.contacts.create({
+        contact = await db.contacts.create({
           user_id: userId,
           ...contactInfo,
           voice_notes: [transcript],
         });
 
         // Calculate initial relationship score
-        await this.updateRelationshipScore(newContact.id);
-
-        return newContact;
+        await this.updateRelationshipScore(contact.id);
       }
+
+      // Enrich contact with additional data
+      await this.enrichAndSyncContact(contact, userId);
+
+      return contact;
     } catch (error) {
       logger.error('Error adding contact from transcript:', error);
       throw error;
+    }
+  }
+
+  /**
+   * Enrich contact with additional data and sync to Google Sheets
+   */
+  async enrichAndSyncContact(contact: any, userId: string): Promise<void> {
+    try {
+      // Get user's Google Sheets configuration
+      const user = await db.users.findById(userId);
+      if (!user) {
+        logger.warn(`User ${userId} not found for Google Sheets sync`);
+        return;
+      }
+
+      const userGoogleConfig = {
+        access_token: user.google_access_token,
+        refresh_token: user.google_refresh_token,
+        spreadsheet_id: user.google_sheets_id,
+        spreadsheet_url: user.google_sheets_url,
+        connected_at: user.updated_at
+      };
+
+      // Enrich contact with external data
+      const enrichment = await googleSheetsService.enrichContact(contact);
+      
+      // Update contact with enriched data
+      const enrichedUpdates: any = {};
+      
+      if (enrichment.company_info) {
+        enrichedUpdates.industry = enrichment.company_info.industry;
+        enrichedUpdates.website = enrichment.company_info.website;
+        enrichedUpdates.linkedin_url = enrichment.company_info.linkedin;
+      }
+      
+      if (enrichment.person_info) {
+        enrichedUpdates.linkedin_url = enrichment.person_info.linkedin_profile;
+        enrichedUpdates.twitter_url = enrichment.person_info.twitter_profile;
+      }
+      
+      if (enrichment.relationship_insights) {
+        enrichedUpdates.ai_insights = {
+          ...contact.ai_insights,
+          mutual_connections: enrichment.relationship_insights.mutual_connections,
+          common_interests: enrichment.relationship_insights.common_interests,
+          potential_collaborations: enrichment.relationship_insights.potential_collaborations,
+          enriched_at: new Date().toISOString()
+        };
+      }
+
+      // Update contact in database
+      if (Object.keys(enrichedUpdates).length > 0) {
+        await db.contacts.update(contact.id, enrichedUpdates);
+        logger.info(`Enriched contact ${contact.name} with additional data`);
+      }
+
+      // Sync all contacts to user's Google Sheets if connected
+      if (userGoogleConfig.access_token && userGoogleConfig.spreadsheet_id) {
+        await this.syncContactsToGoogleSheets(userId, userGoogleConfig);
+      }
+      
+    } catch (error) {
+      logger.error('Error enriching and syncing contact:', error);
+      // Don't throw error to avoid breaking the main flow
+    }
+  }
+
+  /**
+   * Sync all contacts to user's Google Sheets
+   */
+  async syncContactsToGoogleSheets(userId: string, userGoogleConfig?: any): Promise<void> {
+    try {
+      const contacts = await db.contacts.findByUserId(userId);
+      
+      // If no user config provided, get it from database
+      if (!userGoogleConfig) {
+        const user = await db.users.findById(userId);
+        if (!user || !user.google_access_token || !user.google_sheets_id) {
+          logger.warn(`User ${userId} not connected to Google Sheets`);
+          return;
+        }
+        
+        userGoogleConfig = {
+          access_token: user.google_access_token,
+          refresh_token: user.google_refresh_token,
+          spreadsheet_id: user.google_sheets_id,
+          spreadsheet_url: user.google_sheets_url,
+          connected_at: user.updated_at
+        };
+      }
+
+      await googleSheetsService.syncContactsToSheet(contacts, userId, userGoogleConfig);
+      logger.info(`Synced ${contacts.length} contacts to user's Google Sheets`);
+    } catch (error) {
+      logger.error('Error syncing contacts to Google Sheets:', error);
     }
   }
 
