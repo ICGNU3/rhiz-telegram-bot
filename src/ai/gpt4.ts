@@ -8,10 +8,6 @@ const openai = new OpenAI({
   apiKey: config.openai.apiKey,
 });
 
-// Simple response cache for frequently asked questions
-const responseCache = new Map<string, { response: string; timestamp: number }>();
-const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
-
 interface VoiceProcessingResult {
   sessionId: string;
   shouldContinue: boolean;
@@ -44,7 +40,7 @@ class GPT4Service {
   /**
    * Generate a response using the optimal model for the task
    */
-  async generateResponse(prompt: string, context?: any): Promise<string> {
+  async generateResponse(prompt: string, _context?: any): Promise<string> {
     try {
       const model = modelSelector.getOptimalModel('general_response', 'medium');
       
