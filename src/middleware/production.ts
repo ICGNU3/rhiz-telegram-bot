@@ -310,7 +310,7 @@ export function requestLogging(req: ProductionRequest, res: Response, next: Next
 /**
  * Error handling middleware
  */
-export function errorHandler(error: Error, req: Request, res: Response): void {
+export function errorHandler(error: Error, req: Request, res: Response, next: NextFunction): void {
   logger.error('Unhandled error:', {
     error: error.message,
     stack: error.stack,
