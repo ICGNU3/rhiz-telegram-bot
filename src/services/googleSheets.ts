@@ -108,7 +108,7 @@ export class GoogleSheetsService {
   /**
    * Handle OAuth callback and get user tokens
    */
-  async handleOAuthCallback(code: string, state: string): Promise<UserGoogleConfig> {
+  async handleOAuthCallback(code: string, _state: string): Promise<UserGoogleConfig> {
     try {
       const oauth2Client = new google.auth.OAuth2(
         config.google.clientId,

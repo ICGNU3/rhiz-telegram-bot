@@ -56,15 +56,9 @@ export class ElevenLabsService {
     }
   }
 
-  private getSpeedForMood(mood?: string): number {
-    switch (mood) {
-      case 'urgent':
-        return 1.2; // Faster for urgent messages
-      case 'professional':
-        return 0.9; // Slightly slower for professional tone
-      default:
-        return 1.0; // Normal speed for friendly/casual
-    }
+  private getSpeedForMood(_mood?: string): number {
+    // TODO: Implement mood-based speed adjustment
+    return 1.0; // Normal speed for now
   }
 
   private getStyleForMood(mood?: string): 'conversational' | 'formal' | 'casual' {

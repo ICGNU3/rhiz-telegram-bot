@@ -623,7 +623,7 @@ const insights = {
 // Database connection test
 async function testConnection() {
   try {
-    const { data, error } = await getSupabaseClient()
+    const { error } = await getSupabaseClient()
       .from('users')
       .select('count')
       .limit(1);
