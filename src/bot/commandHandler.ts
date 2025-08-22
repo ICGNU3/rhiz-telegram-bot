@@ -132,8 +132,8 @@ Ready to build your network? Let's go! 🚀`;
     return tutorials[nextStep] + `\n\n${progress}\n📌 Send /next to continue or /skip to exit`;
   }
 
-  private skipTutorial(context: CommandContext): string {
-    const { userId } = context;
+  private skipTutorial(_context: CommandContext): string {
+    const { userId } = _context;
     
     if (userId) {
       this.tutorialProgress.delete(userId);
@@ -148,8 +148,8 @@ Ready to build your network? Let's go! 🚀`;
     return randomTip + '\n\nWant more tips? Check out /tutorial or /faq';
   }
 
-  private getUserStats(context: CommandContext): string {
-    const { userId } = context;
+  private getUserStats(_context: CommandContext): string {
+    const { userId } = _context;
     const messageCount = userId ? this.userMessageCount.get(userId) || 0 : 0;
     
     return `📊 **Your Stats**
@@ -162,7 +162,7 @@ Relationship score: N/A
 Use the bot more to see your stats grow!`;
   }
 
-  private listContacts(context: CommandContext): string {
+  private listContacts(): string {
     return `📚 **Your Contacts**
 
 You haven't added any contacts yet.
@@ -175,7 +175,7 @@ You haven't added any contacts yet.
 Try adding your first contact!`;
   }
 
-  private listGoals(context: CommandContext): string {
+  private listGoals(): string {
     return `🎯 **Your Goals**
 
 You haven't set any goals yet.
@@ -238,8 +238,8 @@ Maria Garcia
 Just paste your contacts and I'll import them!`;
   }
 
-  private initiateGoogleConnect(context: CommandContext): string {
-    const { userId } = context;
+  private initiateGoogleConnect(_context: CommandContext): string {
+    const { userId } = _context;
     
     // In production, you'd generate an OAuth URL here
     const googleAuthUrl = `https://accounts.google.com/o/oauth2/v2/auth?` +

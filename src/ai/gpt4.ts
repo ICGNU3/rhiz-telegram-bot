@@ -40,7 +40,7 @@ class GPT4Service {
   /**
    * Generate a response using the optimal model for the task
    */
-  async generateResponse(prompt: string, _context?: any): Promise<string> {
+  async generateResponse(prompt: string): Promise<string> {
     try {
       const model = modelSelector.getOptimalModel('general_response', 'medium');
       
@@ -224,8 +224,7 @@ class GPT4Service {
    */
   private async generateContextualResponse(
     transcript: string, 
-    intentResult: { intent: string; confidence: number; entities: Record<string, any> },
-    _context?: any
+    intentResult: { intent: string; confidence: number; entities: Record<string, any> }
   ): Promise<string> {
     const model = modelSelector.getOptimalModel('response_generation', 'medium');
     
@@ -363,7 +362,7 @@ Keep the response conversational and under 200 words.`;
   /**
    * Generate voice response using ElevenLabs
    */
-  async generateVoiceResponse(prompt: string, _context?: any): Promise<string> {
+  async generateVoiceResponse(prompt: string): Promise<string> {
     try {
       const model = modelSelector.getOptimalModel('voice_response', 'simple');
       

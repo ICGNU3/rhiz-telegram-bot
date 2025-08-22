@@ -146,8 +146,7 @@ export class ModelMonitor {
    */
   async testNewModel(
     task: string,
-    newModel: string,
-    _testInput: string
+    newModel: string
   ): Promise<{
     currentModel: string;
     newModel: string;
