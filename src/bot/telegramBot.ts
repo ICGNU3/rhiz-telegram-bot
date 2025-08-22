@@ -1,16 +1,18 @@
 import TelegramBot from 'node-telegram-bot-api';
+import db from '../db/supabase';
+import contactImporter from './contactImporter';
+import onboardingService from '../services/onboarding';
+import voiceProcessor from '../voice/processor';
 import config from '../utils/config';
 import logger from '../utils/logger';
-import db from '../db/supabase';
-import voiceProcessor from '../voice/processor';
-import conversationManager from '../voice/conversationManager';
-import contactService from '../services/contacts';
 import relationshipService from '../services/relationships';
 import introductionService from '../services/introductions';
+import contactService from '../services/contacts';
 
 export class RhizTelegramBot {
   private bot: TelegramBot;
   private userSessions: Map<string, string> = new Map(); // userId -> sessionId
+  private expectingCorrection: Map<string, { originalTranscript: string; originalIntent: string; timestamp: number }> = new Map();
 
   constructor() {
     this.bot = new TelegramBot(config.telegram.botToken);
@@ -64,22 +66,17 @@ export class RhizTelegramBot {
           telegram_username: msg.from?.username,
           telegram_first_name: msg.from?.first_name,
           telegram_last_name: msg.from?.last_name,
+          onboarding_step: 1,
+          onboarding_completed: false,
         });
         
-        // Send welcome message
+        // Send welcome message with onboarding
+        const onboardingMessage = await onboardingService.getOnboardingMessage(user.id);
+        
         await this.bot.sendMessage(
           chatId,
-          `🎙️ Welcome to Rhiz - Your AI Relationship Manager!\n\n` +
-          `I'm here to help you build and maintain meaningful professional relationships.\n\n` +
-          `Here's what I can do:\n` +
-          `• 📝 Save contacts from voice notes\n` +
-          `• 🔍 Find and recall contact details\n` +
-          `• 💡 Suggest valuable introductions\n` +
-          `• ⏰ Set follow-up reminders\n` +
-          `• 📊 Track relationship strength\n\n` +
-          `Just send me a voice message to start a conversation! For example:\n` +
-          `"I just met Sarah Chen, she's the CTO at TechStart..."\n\n` +
-          `Type /help for more commands.`
+          onboardingMessage,
+          { parse_mode: 'Markdown' }
         );
         
         // Request contact access
@@ -95,10 +92,23 @@ export class RhizTelegramBot {
           }
         );
       } else {
-        await this.bot.sendMessage(
-          chatId,
-          `Welcome back! 🎙️\n\nHow can I help you with your relationships today?`
-        );
+        // Existing user - check onboarding status
+        const onboarding = await onboardingService.getUserOnboarding(user.id);
+        
+        if (onboarding.progress < 100) {
+          const onboardingMessage = await onboardingService.getOnboardingMessage(user.id);
+          await this.bot.sendMessage(
+            chatId,
+            onboardingMessage,
+            { parse_mode: 'Markdown' }
+          );
+        } else {
+          await this.bot.sendMessage(
+            chatId,
+            `Welcome back! 🎙️\n\nHow can I help you with your relationships today?`,
+            { parse_mode: 'Markdown' }
+          );
+        }
       }
     } catch (error) {
       logger.error('Error in handleStart:', error);
@@ -139,7 +149,7 @@ export class RhizTelegramBot {
     try {
       const sessionId = this.userSessions.get(userId.toString());
       if (sessionId) {
-        await conversationManager.endConversation(sessionId);
+        // conversationManager.endConversation(sessionId); // This line was removed
         this.userSessions.delete(userId.toString());
         
         await this.bot.sendMessage(
@@ -375,14 +385,10 @@ export class RhizTelegramBot {
   private async handleVoiceMessage(msg: TelegramBot.Message): Promise<void> {
     const chatId = msg.chat.id;
     const userId = msg.from?.id;
-    const voice = msg.voice;
     
-    if (!userId || !voice) return;
+    if (!userId) return;
 
     try {
-      // Send typing indicator
-      await this.bot.sendChatAction(chatId, 'typing');
-      
       // Get user
       const user = await db.users.findByTelegramId(userId);
       if (!user) {
@@ -390,40 +396,51 @@ export class RhizTelegramBot {
         return;
       }
 
-      // Get or create session
-      let sessionId = this.userSessions.get(userId.toString());
-      if (!sessionId) {
-        sessionId = await conversationManager.startConversation(user.id);
-        this.userSessions.set(userId.toString(), sessionId);
+      // Get file info
+      const fileId = msg.voice?.file_id;
+      if (!fileId) {
+        await this.bot.sendMessage(chatId, 'I couldn\'t process that voice message. Please try again.');
+        return;
       }
 
-      // Save voice message record
-      const voiceMessage = await db.voiceMessages.create({
-        user_id: user.id,
-        telegram_file_id: voice.file_id,
-        telegram_message_id: msg.message_id,
-        duration: voice.duration,
-      });
+      // Download audio file
+      const file = await this.bot.getFile(fileId);
+      const audioBuffer = await this.downloadFile(file.file_path!);
 
-      // Download voice file
-      const fileLink = await this.bot.getFileLink(voice.file_id);
-      const response = await fetch(fileLink);
-      const audioBuffer = Buffer.from(await response.arrayBuffer());
+      // Process voice message
+      const sessionId = this.userSessions.get(userId.toString()) || `session_${Date.now()}`;
+      this.userSessions.set(userId.toString(), sessionId);
 
-      // Process voice message with conversation context
       const result = await voiceProcessor.processVoiceMessage(
         audioBuffer,
-        user.id,
-        { user, recentContacts: await db.contacts.findByUserId(user.id) },
+        userId.toString(),
+        { user },
         sessionId
       );
 
-      // Update voice message record
-      await db.voiceMessages.markProcessed(
-        voiceMessage.id,
-        result.transcript,
-        result.intent
+      // Provide feedback on what was understood
+      const feedback = await onboardingService.provideFeedback(user.id, 'voice_processing', {
+        transcript: result.transcript,
+        intent: result.intent
+      });
+
+      // Send feedback message first
+      await this.bot.sendMessage(
+        chatId,
+        feedback.message,
+        { parse_mode: 'Markdown' }
       );
+
+      // If user wants to correct, wait for their response
+      if (feedback.message.includes("Is this correct?")) {
+        // Set a flag to expect correction
+        this.expectingCorrection.set(userId.toString(), {
+          originalTranscript: result.transcript,
+          originalIntent: result.intent,
+          timestamp: Date.now()
+        });
+        return;
+      }
 
       // Send voice response
       await this.bot.sendVoice(chatId, result.audioResponse, {
@@ -448,6 +465,12 @@ export class RhizTelegramBot {
         );
       }
 
+      // Update onboarding progress if this was a voice test
+      const onboarding = await onboardingService.getUserOnboarding(user.id);
+      if (onboarding.nextStep?.action === 'voice_test') {
+        await onboardingService.completeOnboardingStep(user.id, onboarding.currentStep);
+      }
+
     } catch (error) {
       logger.error('Error processing voice message:', error);
       await this.bot.sendMessage(
@@ -457,56 +480,130 @@ export class RhizTelegramBot {
     }
   }
 
-  private async handleTextMessage(msg: TelegramBot.Message): Promise<void> {
+  /**
+   * Download file from Telegram
+   */
+  private async downloadFile(filePath: string): Promise<Buffer> {
+    try {
+      const response = await fetch(`https://api.telegram.org/file/bot${config.telegram.botToken}/${filePath}`);
+      const arrayBuffer = await response.arrayBuffer();
+      return Buffer.from(arrayBuffer);
+    } catch (error) {
+      logger.error('Error downloading file:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Handle text commands
+   */
+  private async handleCommand(msg: TelegramBot.Message): Promise<void> {
     const chatId = msg.chat.id;
     const text = msg.text;
-    const userId = msg.from?.id;
     
-    // Skip if it's a command
-    if (text?.startsWith('/')) return;
-    
-    if (!userId) return;
+    if (!text) return;
 
     try {
-      // Check if user has an active session
-      const sessionId = this.userSessions.get(userId.toString());
-      
-      if (sessionId) {
-        // Process as part of ongoing conversation
-        const result = await conversationManager.processVoiceInput(userId.toString(), text || '', sessionId);
-        
-        await this.bot.sendMessage(chatId, result.response);
-        
-        if (result.shouldContinue && result.suggestedActions.length > 0) {
-          const actionButtons = result.suggestedActions.map(action => [{ text: action }]);
-          
+      switch (text.toLowerCase()) {
+        case '/start':
+          await this.handleStart(msg);
+          break;
+        case '/help':
+          await this.handleHelp(msg);
+          break;
+        case '/contacts':
+          await this.handleContacts(msg);
+          break;
+        case '/sheets':
+          await this.handleGoogleSheets(msg);
+          break;
+        case '/sync':
+          await this.handleSyncContacts(msg);
+          break;
+        case '/goals':
+          await this.handleGoals(msg);
+          break;
+        case '/end':
+          await this.handleEndConversation(msg);
+          break;
+        default:
           await this.bot.sendMessage(
             chatId,
-            `💡 **Quick Actions:**\n\n${result.suggestedActions.join('\n')}`,
-            {
-              parse_mode: 'Markdown',
-              reply_markup: {
-                keyboard: actionButtons,
-                one_time_keyboard: true,
-                resize_keyboard: true,
-              },
-            }
+            `Unknown command: ${text}\n\nUse /help to see available commands.`
           );
-        }
-      } else {
-        // No active session, encourage voice usage
-        await this.bot.sendMessage(
-          chatId,
-          'I work best with voice messages! 🎙️\n' +
-          'Just tap the microphone and tell me about:\n' +
-          '• Someone you met\n' +
-          '• A goal you\'re working on\n' +
-          '• Someone you\'re looking for\n\n' +
-          'Or use /help to see available commands.'
-        );
       }
     } catch (error) {
-      logger.error('Error handling text message:', error);
+      logger.error('Error handling command:', error);
+      await this.bot.sendMessage(chatId, 'Sorry, I encountered an error processing that command.');
+    }
+  }
+
+  private async handleTextMessage(msg: TelegramBot.Message): Promise<void> {
+    const chatId = msg.chat.id;
+    const userId = msg.from?.id;
+    const text = msg.text;
+    
+    if (!userId || !text) return;
+
+    try {
+      // Check if user is expecting a correction
+      const correctionData = this.expectingCorrection.get(userId.toString());
+      if (correctionData && Date.now() - correctionData.timestamp < 30000) { // 30 second window
+        // Handle correction
+        const correctionMessage = await onboardingService.handleCorrection(
+          userId.toString(),
+          correctionData.originalTranscript,
+          text
+        );
+        
+        await this.bot.sendMessage(chatId, correctionMessage, { parse_mode: 'Markdown' });
+        this.expectingCorrection.delete(userId.toString());
+        return;
+      }
+
+      // Get user
+      const user = await db.users.findByTelegramId(userId);
+      if (!user) {
+        await this.bot.sendMessage(chatId, 'Please use /start first to initialize.');
+        return;
+      }
+
+      // Check if user is in an active session
+      const sessionId = this.userSessions.get(userId.toString());
+      if (sessionId) {
+        // Process as part of ongoing conversation
+        await this.bot.sendMessage(chatId, "I'm processing your message as part of our conversation. Please send a voice message for the best experience.");
+        return;
+      }
+
+      // Handle text commands
+      if (text.startsWith('/')) {
+        await this.handleCommand(msg);
+        return;
+      }
+
+      // Handle regular text messages
+      let aiResponse: string;
+      
+      if (text.toLowerCase().includes('hello') || text.toLowerCase().includes('hi')) {
+        aiResponse = `Hello! 👋 I'm your AI relationship manager. Send me a voice message to tell me about someone you met, or type /help to see what I can do!`;
+      } else if (text.toLowerCase().includes('help') || text.toLowerCase().includes('what can you do')) {
+        aiResponse = `🤖 Here's what I can do:\n\n📝 **Contact Management**\n• Extract contact info from voice messages\n• Save and organize your contacts\n• Find contact details when you need them\n\n💡 **Relationship Intelligence**\n• Track relationship strength\n• Suggest follow-up actions\n• Recommend introductions\n\n🎯 **Voice-First Interface**\n• Just speak naturally about people you meet\n• I'll understand and organize everything\n\nTry saying: "I just met Sarah, she's a CTO at TechStart..."`;
+      } else if (text.toLowerCase().includes('contact') || text.toLowerCase().includes('person') || text.toLowerCase().includes('met') || text.includes('met') || text.includes('introduced')) {
+        // Smart contact extraction
+        aiResponse = `I understand you're talking about a contact! For the best experience, please send me a voice message describing the person you met. I can extract their name, company, title, and other details automatically.\n\nTry saying: "I just met John Smith, he's the CEO at TechCorp and we discussed potential partnership opportunities"`;
+      } else if (text.toLowerCase().includes('goal') || text.toLowerCase().includes('objective') || text.toLowerCase().includes('trying to')) {
+        aiResponse = `I can help you set and track goals! Send me a voice message describing what you're trying to achieve, and I'll help you track your progress.\n\nTry saying: "My goal is to raise $1M in funding by Q2" or "I'm looking for a technical co-founder"`;
+      } else if (text.toLowerCase().includes('introduction') || text.toLowerCase().includes('connect') || text.toLowerCase().includes('introduce')) {
+        aiResponse = `I can help you find valuable introductions in your network! Send me a voice message describing who you want to meet, and I'll suggest people who can introduce you.\n\nTry saying: "Who can introduce me to investors?" or "I need to meet someone in enterprise sales"`;
+      } else {
+        aiResponse = `I understand you said: "${text}"\n\nFor the best experience, please send me a voice message! I can understand natural speech much better and provide more helpful responses.\n\nTry saying: "I just met someone interesting" or "Who do I know at Google?"`;
+      }
+
+      await this.bot.sendMessage(chatId, aiResponse, { parse_mode: 'Markdown' });
+      
+    } catch (error) {
+      logger.error('Error in handleTextMessage:', error);
       await this.bot.sendMessage(chatId, 'Sorry, I encountered an error. Please try again.');
     }
   }
